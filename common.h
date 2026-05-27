@@ -9,10 +9,12 @@ typedef enum {
     OP_LOGIN,
     OP_REGISTER,
     OP_GET_PRODUCTS,
+    OP_GET_CATALOG,      // <-- NUEVA OPERACIÓN
     OP_ADD_CART,
-    OP_GET_CART,         // <-- Asegúrate de que esta esté aquí
+    OP_GET_CART,         
     OP_BUY_CART,         
-    OP_UPDATE_PROFILE,   // <-- Y esta también
+    OP_UPDATE_PROFILE,   
+    OP_CHECK_ALERTS,     
     OP_EXIT
 } op_type;
 

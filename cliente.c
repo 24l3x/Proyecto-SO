@@ -284,6 +284,7 @@ int main(int argc, char *argv[]) {
                     wgetch(win);
                 }
             }
+            //--------------------------------------------------------------------------------------------------------------------------------------------------
             else if (opcion_seleccionada == 1) { // ALERTAS DE CADUCIDAD
                 werase(win);
                 draw_box(win, "Control Predictivo de Mermas");
@@ -305,6 +306,7 @@ int main(int argc, char *argv[]) {
                 wrefresh(win);
                 wgetch(win);
             }
+            //----------------------------------------------------------------------------------------------------------------------------------------------
             else if (opcion_seleccionada == 2) { // COMPRAR PRODUCTO
                 int salir_compras = 0;
                 int opcion_compra = 0;
@@ -339,7 +341,7 @@ int main(int argc, char *argv[]) {
                             draw_box(win, "Cargando Catalogo...");
                             wrefresh(win);
 
-                            if (enviar_peticion_servidor(OP_GET_PRODUCTS, "")) {
+                            if (enviar_peticion_servidor(OP_GET_CATALOG, "")) {
                                 char productos[20][100];
                                 int num_productos = 0;
                                 char *token = strtok(shm_ptr->respuesta, "\n");
@@ -376,14 +378,45 @@ int main(int argc, char *argv[]) {
                                         else if (input_ch == KEY_DOWN && prod_seleccionado < num_productos - 1) prod_seleccionado++;
                                         else if (input_ch == 'q' || input_ch == 'Q') salir_catalogo = 1;
                                         else if (input_ch == '\n' || input_ch == KEY_ENTER) {
-                                            char payload_carrito[1024];
-                                            // Empaquetamos para agregar al carrito
-                                            snprintf(payload_carrito, sizeof(payload_carrito), "%s|%s", usuario_actual, productos[prod_seleccionado]);
-                                            enviar_peticion_servidor(OP_ADD_CART, payload_carrito);
+                                            // Extraer los datos del catalogo de proveedores
+                                            char id_prod[20], nom_prod[100], cad_prod[20];
                                             
+                                            // Leemos el formato del catalogo: ID, Nombre, Caducidad
+                                            sscanf(productos[prod_seleccionado], " %[^,] , %[^,] , %s", id_prod, nom_prod, cad_prod);
+
+                                            // Ventana emergente para preguntar cantidad a pedir
                                             werase(win);
-                                            draw_box(win, "Aviso");
-                                            mvwprintw(win, height / 2, 2, "%s", shm_ptr->respuesta);
+                                            draw_box(win, "Pedido a Proveedor");
+                                            mvwprintw(win, 2, 2, "Articulo: %s", nom_prod);
+                                            mvwprintw(win, 4, 2, "Cantidad a pedir: ");
+                                            wrefresh(win);
+                                            
+                                            char qty_str[10];
+                                            echo();
+                                            curs_set(1);
+                                            mvwgetnstr(win, 4, 20, qty_str, 9);
+                                            noecho();
+                                            curs_set(0);
+                                            
+                                            int cantidad_pedida = atoi(qty_str);
+                                            
+                                            if (cantidad_pedida > 0) {
+                                                char payload_carrito[1024];
+                                                // Empaquetamos para el carrito: ID, Nombre, Cantidad pedida, Caducidad
+                                                snprintf(payload_carrito, sizeof(payload_carrito), "%s|%s, %s, %d, %s", 
+                                                         usuario_actual, id_prod, nom_prod, cantidad_pedida, cad_prod);
+                                                
+                                                enviar_peticion_servidor(OP_ADD_CART, payload_carrito);
+                                                
+                                                werase(win);
+                                                draw_box(win, "Exito");
+                                                mvwprintw(win, height / 2, 2, "Producto agregado a tu orden.");
+                                            } else {
+                                                werase(win);
+                                                draw_box(win, "Error");
+                                                mvwprintw(win, height / 2, 2, "Cantidad invalida.");
+                                            }
+                                            
                                             mvwprintw(win, height - 2, 2, "[Presiona cualquier tecla]");
                                             wrefresh(win);
                                             wgetch(win);
