@@ -11,7 +11,7 @@ servidor: servidor.c
 	$(CC) $(CFLAGS) servidor.c -o servidor $(LDFLAGS)
 
 cliente: cliente.c
-	$(CC) $(CFLAGS) cliente.c -o cliente
+	$(CC) $(CFLAGS) cliente.c -o cliente -lncurses -lcrypto
 
 clean:
 	rm -f $(TARGETS)

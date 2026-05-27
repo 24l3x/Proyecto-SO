@@ -63,11 +63,13 @@ int main(int argc, char *argv[]) {
     key_t conn_key = ftok(".", 'C');
     key_t my_key = ftok(".", 'A' + my_id); 
 
+    // Intentamos obtener los semáforos sin crearlos (0666)
     int sem_conn_id = semget(conn_key, 1, 0666);
     semid = semget(base_key, MAX_CLIENTS * 2, 0666);
     
+    // Si los semáforos no existen, el servidor está apagado
     if (semid == -1 || sem_conn_id == -1) {
-        printf("Error: Servidor inactivo o conexión perdida.\n");
+        printf("El servidor está apagado por lo que no podemos iniciar el cliente\n");
         exit(1);
     }
 
@@ -108,20 +110,22 @@ int main(int argc, char *argv[]) {
         
         snprintf(title, sizeof(title), logged_in ? "Usuario: %s" : "Login SGICPM", usuario_actual);
 
-        const char *opciones[4];
+        const char *opciones[6]; 
         int num_opciones;
+        
         if (!logged_in) {
-            opciones[0] = "1. Iniciar Sesion";
-            opciones[1] = "2. Registrarse";
-            opciones[2] = "3. Salir";
+            opciones[0] = "Iniciar Sesion";
+            opciones[1] = "Registrarse";
+            opciones[2] = "Salir";
             num_opciones = 3;
         } else {
-            opciones[0] = "1. Ver Catalogo de Productos";
-            opciones[1] = "2. Ver Carrito de Compras";  // Agregada
-            opciones[2] = "3. Perfil de Usuario";         // Agregada
-            opciones[3] = "4. Cerrar Sesion";
-            opciones[4] = "5. Salir";
-            num_opciones = 5;
+            opciones[0] = "Ver Inventario";           // Antes "Ver Catalogo de Productos"
+            opciones[1] = "Alertas de Caducidad";     // Movido de posición
+            opciones[2] = "Comprar Producto";         // Nueva lógica pendiente
+            opciones[3] = "Perfil de Usuario";        
+            opciones[4] = "Cerrar Sesion";
+            opciones[5] = "Salir";
+            num_opciones = 6;
         }
 
         // --- DIBUJADO DEL MENÚ PRINCIPAL ---
@@ -147,21 +151,34 @@ int main(int argc, char *argv[]) {
 
         // --- LÓGICA DE USUARIO NO LOGUEADO ---
         if (!logged_in) {
-            if (opcion_seleccionada == 2) break; 
+            if (opcion_seleccionada == 2) break; // Opcion de salir
 
             werase(win);
             draw_box(win, title);
+            
+            // Textos limpios y alineados
             mvwprintw(win, 2, 2, "Usuario: ");
             mvwprintw(win, 4, 2, "Password: ");
             
+            // Instrucción posicionada en la parte inferior
+            mvwprintw(win, height - 2, 2, "[Deja vacio y da ENTER p/volver]");
+            wrefresh(win);
+            
             curs_set(1); 
             echo();
-            mvwgetnstr(win, 2, 11, user, 49);
+            // Captura de usuario en la misma línea
+            mvwgetnstr(win, 2, 11, user, 49); 
             noecho();
+            
+            // --- BOTÓN DE ATRÁS (USUARIO) ---
+            if (strlen(user) == 0) {
+                curs_set(0);
+                continue; 
+            }
             
             // Entrada de password oculta
             int i = 0;
-            wmove(win, 4, 12);
+            wmove(win, 4, 12); // Captura de password en la misma línea
             while ((ch = wgetch(win)) != '\n' && ch != '\r' && i < 49) { 
                 if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
                     if (i > 0) {
@@ -179,6 +196,11 @@ int main(int argc, char *argv[]) {
             }
             pass[i] = '\0';
             curs_set(0); 
+
+            // --- BOTÓN DE ATRÁS (PASSWORD) ---
+            if (strlen(pass) == 0) {
+                continue;
+            }
 
             char hashed_pass[65];
             hash_password(pass, hashed_pass);
@@ -206,14 +228,12 @@ int main(int argc, char *argv[]) {
 
         } else {
             // --- LÓGICA DE USUARIO LOGUEADO ---
-            if (opcion_seleccionada == 0) { 
-                if (opcion_seleccionada == 0) { // VER CATALOGO
+            if (opcion_seleccionada == 0) { // VER INVENTARIO
                 werase(win);
-                draw_box(win, "Cargando Catalogo...");
+                draw_box(win, "Cargando Inventario...");
                 wrefresh(win);
 
                 if (enviar_peticion_servidor(OP_GET_PRODUCTS, "")) {
-                    // Separar la respuesta en un arreglo de cadenas (hasta 20 productos)
                     char productos[20][100];
                     int num_productos = 0;
                     
@@ -226,107 +246,219 @@ int main(int argc, char *argv[]) {
                     }
 
                     if (num_productos == 0) {
-                        mvwprintw(win, 4, 2, "No hay productos disponibles.");
+                        mvwprintw(win, 4, 2, "El inventario esta vacio.");
                         mvwprintw(win, height - 2, 2, "[Presiona cualquier tecla]");
                         wrefresh(win);
                         wgetch(win);
                     } else {
-                        int prod_seleccionado = 0;
-                        int salir_catalogo = 0;
+                        int salir_inventario = 0;
+                        int scroll_offset = 0; // Para navegar si hay muchos productos
 
-                        // Bucle interactivo del catálogo
-                        while (!salir_catalogo) {
+                        while (!salir_inventario) {
                             werase(win);
-                            draw_box(win, "Catalogo (ENTER: Agregar | 'q': Volver)");
+                            draw_box(win, "Inventario Actual ('q': Volver)");
                             
-                            // Imprimir encabezado simulado
                             mvwprintw(win, 2, 4, "ID, Nombre, Cantidad, Caducidad");
-                            mvwhline(win, 3, 2, ACS_HLINE, width - 4); // Línea divisoria
+                            mvwhline(win, 3, 2, ACS_HLINE, width - 4); 
 
-                            // Dibujar la lista de productos
-                            for (int i = 0; i < num_productos; i++) {
-                                if (i == prod_seleccionado) wattron(win, A_REVERSE);
-                                mvwprintw(win, 4 + i, 4, "%s", productos[i]);
-                                if (i == prod_seleccionado) wattroff(win, A_REVERSE);
+                            // Dibujar la lista de productos (Solo lectura)
+                            for (int i = 0; i < num_productos && i < height - 6; i++) {
+                                mvwprintw(win, 4 + i, 4, "%s", productos[i + scroll_offset]);
                             }
                             
                             wrefresh(win);
                             
                             int input_ch = wgetch(win);
-                            if (input_ch == KEY_UP) {
-                                prod_seleccionado = (prod_seleccionado - 1 + num_productos) % num_productos;
-                            } else if (input_ch == KEY_DOWN) {
-                                prod_seleccionado = (prod_seleccionado + 1) % num_productos;
-                            } else if (input_ch == 'q' || input_ch == 'Q') {
-                                salir_catalogo = 1;
-                            } else if (input_ch == '\n' || input_ch == KEY_ENTER) {
-                                // Enviar petición de agregar al carrito
-                                char payload_carrito[1024];
-                                snprintf(payload_carrito, sizeof(payload_carrito), "%s|%s", usuario_actual, productos[prod_seleccionado]);
-                                
-                                enviar_peticion_servidor(OP_ADD_CART, payload_carrito);
-                                
-                                // Mostrar confirmación temporal
-                                werase(win);
-                                draw_box(win, "Aviso");
-                                mvwprintw(win, height / 2, (width - strlen(shm_ptr->respuesta)) / 2, "%s", shm_ptr->respuesta);
-                                mvwprintw(win, height - 2, 2, "[Presiona cualquier tecla para continuar]");
-                                wrefresh(win);
-                                wgetch(win);
+                            if (input_ch == KEY_UP && scroll_offset > 0) {
+                                scroll_offset--;
+                            } else if (input_ch == KEY_DOWN && scroll_offset < num_productos - (height - 6)) {
+                                scroll_offset++;
+                            } else if (input_ch == 'q' || input_ch == 'Q' || input_ch == '\n' || input_ch == KEY_ENTER) {
+                                salir_inventario = 1;
                             }
                         }
                     }
                 } else {
-                    mvwprintw(win, 4, 2, "Error al cargar catalogo.");
+                    mvwprintw(win, 4, 2, "Error al cargar inventario.");
                     wrefresh(win);
                     wgetch(win);
                 }
             }
-            }
-            else if (opcion_seleccionada == 1) { // VER CARRITO DE COMPRAS
+            else if (opcion_seleccionada == 1) { // ALERTAS DE CADUCIDAD
                 werase(win);
-                draw_box(win, "Mi Carrito de Compras");
-                
-                if (enviar_peticion_servidor(OP_GET_CART, usuario_actual)) {
-                    mvwprintw(win, 2, 2, "Articulos guardados actualmente:");
+                draw_box(win, "Control Predictivo de Mermas");
+                wrefresh(win);
+
+                if (enviar_peticion_servidor(OP_CHECK_ALERTS, "")) {
+                    int y = 2;
+                    char *token = strtok(shm_ptr->respuesta, "\n");
                     
-                    // Mostramos el volcado de lineas que nos envio el servidor
-                    mvwprintw(win, 4, 2, "%s", shm_ptr->respuesta);
-                    
-                    mvwprintw(win, height - 3, 2, "[ENTER] Comprar todo | [Cualquier otra tecla] Volver");
-                    wrefresh(win);
-                    
-                    int input_cart = wgetch(win);
-                    if (input_cart == '\n' || input_cart == KEY_ENTER) {
-                        werase(win);
-                        draw_box(win, "Procesando transaccion...");
-                        wrefresh(win);
-                        
-                        enviar_peticion_servidor(OP_BUY_CART, usuario_actual);
-                        
-                        werase(win);
-                        draw_box(win, "Estatus de Compra");
-                        mvwprintw(win, 4, 2, "%s", shm_ptr->respuesta);
-                        mvwprintw(win, height - 2, 2, "[Presiona cualquier tecla]");
-                        wrefresh(win);
-                        wgetch(win);
+                    while (token != NULL && y < height - 3) {
+                        mvwprintw(win, y++, 2, "%s", token);
+                        token = strtok(NULL, "\n");
                     }
                 } else {
-                    mvwprintw(win, 4, 2, "Error al enlazar con el carrito.");
-                    wgetch(win);
+                    mvwprintw(win, 2, 2, "Error: %s", shm_ptr->respuesta);
+                }
+
+                mvwprintw(win, height - 2, 2, "[Presiona cualquier tecla para volver]");
+                wrefresh(win);
+                wgetch(win);
+            }
+            else if (opcion_seleccionada == 2) { // COMPRAR PRODUCTO
+                int salir_compras = 0;
+                int opcion_compra = 0;
+                const char *opciones_compra[3] = {
+                    "1. Ver Catalogo (Agregar a carrito)", 
+                    "2. Ver Carrito (Comprar)", 
+                    "3. Volver al Menu Principal"
+                };
+
+                // --- BUCLE DEL SUBMENÚ DE COMPRAS ---
+                while (!salir_compras) {
+                    werase(win);
+                    draw_box(win, "Modulo de Compras");
+                    mvwprintw(win, 2, 2, "Seleccione una opcion:");
+                    
+                    for (int i = 0; i < 3; i++) {
+                        if (i == opcion_compra) wattron(win, A_REVERSE);
+                        mvwprintw(win, 4 + i, 4, "%s", opciones_compra[i]);
+                        if (i == opcion_compra) wattroff(win, A_REVERSE);
+                    }
+                    
+                    mvwprintw(win, height - 2, 3, "Usa flechas y ENTER");
+                    wrefresh(win);
+                    
+                    int ch_comp = wgetch(win);
+                    if (ch_comp == KEY_UP) opcion_compra = (opcion_compra - 1 + 3) % 3;
+                    else if (ch_comp == KEY_DOWN) opcion_compra = (opcion_compra + 1) % 3;
+                    else if (ch_comp == '\n' || ch_comp == KEY_ENTER) {
+                        
+                        if (opcion_compra == 0) { // 1. VER CATALOGO Y AGREGAR
+                            werase(win);
+                            draw_box(win, "Cargando Catalogo...");
+                            wrefresh(win);
+
+                            if (enviar_peticion_servidor(OP_GET_PRODUCTS, "")) {
+                                char productos[20][100];
+                                int num_productos = 0;
+                                char *token = strtok(shm_ptr->respuesta, "\n");
+                                while (token != NULL && num_productos < 20) {
+                                    strncpy(productos[num_productos], token, 99);
+                                    productos[num_productos][99] = '\0';
+                                    num_productos++;
+                                    token = strtok(NULL, "\n");
+                                }
+
+                                if (num_productos == 0) {
+                                    mvwprintw(win, 4, 2, "El catalogo esta vacio.");
+                                    mvwprintw(win, height - 2, 2, "[Presiona cualquier tecla]");
+                                    wrefresh(win);
+                                    wgetch(win);
+                                } else {
+                                    int prod_seleccionado = 0;
+                                    int salir_catalogo = 0;
+                                    while (!salir_catalogo) {
+                                        werase(win);
+                                        draw_box(win, "Catalogo (ENTER: Agregar | 'q': Volver)");
+                                        mvwprintw(win, 2, 4, "ID, Nombre, Cantidad, Caducidad");
+                                        mvwhline(win, 3, 2, ACS_HLINE, width - 4);
+                                        
+                                        for (int i = 0; i < num_productos && i < height - 6; i++) {
+                                            if (i == prod_seleccionado) wattron(win, A_REVERSE);
+                                            mvwprintw(win, 4 + i, 4, "%s", productos[i]);
+                                            if (i == prod_seleccionado) wattroff(win, A_REVERSE);
+                                        }
+                                        wrefresh(win);
+                                        
+                                        int input_ch = wgetch(win);
+                                        if (input_ch == KEY_UP && prod_seleccionado > 0) prod_seleccionado--;
+                                        else if (input_ch == KEY_DOWN && prod_seleccionado < num_productos - 1) prod_seleccionado++;
+                                        else if (input_ch == 'q' || input_ch == 'Q') salir_catalogo = 1;
+                                        else if (input_ch == '\n' || input_ch == KEY_ENTER) {
+                                            char payload_carrito[1024];
+                                            // Empaquetamos para agregar al carrito
+                                            snprintf(payload_carrito, sizeof(payload_carrito), "%s|%s", usuario_actual, productos[prod_seleccionado]);
+                                            enviar_peticion_servidor(OP_ADD_CART, payload_carrito);
+                                            
+                                            werase(win);
+                                            draw_box(win, "Aviso");
+                                            mvwprintw(win, height / 2, 2, "%s", shm_ptr->respuesta);
+                                            mvwprintw(win, height - 2, 2, "[Presiona cualquier tecla]");
+                                            wrefresh(win);
+                                            wgetch(win);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        else if (opcion_compra == 1) { // 2. VER CARRITO Y PAGAR
+                            werase(win);
+                            draw_box(win, "Mi Carrito");
+                            
+                            if (enviar_peticion_servidor(OP_GET_CART, usuario_actual)) {
+                                mvwprintw(win, 2, 2, "Articulos guardados:");
+                                
+                                int y = 4;
+                                char *token = strtok(shm_ptr->respuesta, "\n");
+                                while (token != NULL && y < height - 3) {
+                                    mvwprintw(win, y++, 2, "%s", token);
+                                    token = strtok(NULL, "\n");
+                                }
+                                
+                                mvwprintw(win, height - 2, 2, "[ENTER] Comprar | [q] Volver");
+                                wrefresh(win);
+                                
+                                int input_cart = wgetch(win);
+                                if (input_cart == '\n' || input_cart == KEY_ENTER) {
+                                    werase(win);
+                                    draw_box(win, "Procesando transaccion...");
+                                    wrefresh(win);
+                                    
+                                    // Mandamos la orden de compra al servidor
+                                    enviar_peticion_servidor(OP_BUY_CART, usuario_actual);
+                                    
+                                    werase(win);
+                                    draw_box(win, "Estatus de Compra");
+                                    mvwprintw(win, 4, 2, "%s", shm_ptr->respuesta);
+                                    mvwprintw(win, height - 2, 2, "[Presiona cualquier tecla]");
+                                    wrefresh(win);
+                                    wgetch(win);
+                                } 
+                                // Si presiona 'q' o cualquier otra tecla que no sea ENTER, 
+                                // el if no hace nada y simplemente regresa al submenú.
+                            } else {
+                                mvwprintw(win, 4, 2, "Error al enlazar con el carrito.");
+                                wgetch(win);
+                            }
+                        }
+                        else if (opcion_compra == 2) { // 3. SALIR
+                            salir_compras = 1; // Rompe el bucle del submenú
+                        }
+                    }
                 }
             }
-            else if (opcion_seleccionada == 2) { // MODIFICAR PERFIL
+            else if (opcion_seleccionada == 3) { // MODIFICAR PERFIL
                 char nuevo_user[50], nuevo_pass[50];
                 werase(win);
                 draw_box(win, "Configuracion de Perfil");
                 mvwprintw(win, 2, 2, "Nuevo Usuario: ");
                 mvwprintw(win, 4, 2, "Nuevo Password: ");
                 
+                // --- AVISO VISUAL PARA EL USUARIO ---
+                mvwprintw(win, height - 2, 2, "[Deja vacio y da ENTER p/volver]");
+                wrefresh(win);
+                
                 curs_set(1); 
                 echo();
                 mvwgetnstr(win, 2, 17, nuevo_user, 49);
                 noecho();
+
+                // --- LÓGICA DE SALIDA (Atrás) ---
+                if (strlen(nuevo_user) == 0) {
+                    curs_set(0);
+                    continue; // Regresa al menú principal
+                }
                 
                 // Captura de password oculta con asteriscos
                 int i = 0;
@@ -349,6 +481,11 @@ int main(int argc, char *argv[]) {
                 nuevo_pass[i] = '\0';
                 curs_set(0); 
 
+                // --- LÓGICA DE SALIDA (Atrás) EN PASSWORD ---
+                if (strlen(nuevo_pass) == 0) {
+                    continue; // Regresa al menú principal
+                }
+
                 if (strlen(nuevo_user) > 0 && strlen(nuevo_pass) > 0) {
                     char nuevo_hash[65];
                     hash_password(nuevo_pass, nuevo_hash);
@@ -356,22 +493,28 @@ int main(int argc, char *argv[]) {
                     // Empaquetar datos: usuario_actual|nuevo_usuario|nuevo_hash
                     snprintf(payload_buffer, sizeof(payload_buffer), "%s|%s|%s", usuario_actual, nuevo_user, nuevo_hash);
                     
+                    // Limpiamos la pantalla antes de mostrar el resultado
+                    werase(win);
+                    draw_box(win, "Configuracion de Perfil");
+
                     if (enviar_peticion_servidor(OP_UPDATE_PROFILE, payload_buffer)) {
                         // Cambiar localmente el nombre del usuario para reflejar el cambio en la barra de titulo
                         strncpy(usuario_actual, nuevo_user, sizeof(usuario_actual));
-                        mvwprintw(win, 7, 2, "%s", shm_ptr->respuesta);
+                        mvwprintw(win, 4, 2, "%s", shm_ptr->respuesta);
                     } else {
-                        mvwprintw(win, 7, 2, "Error: %s", shm_ptr->respuesta);
+                        mvwprintw(win, 4, 2, "Error: %s", shm_ptr->respuesta);
                     }
                 } else {
-                    mvwprintw(win, 7, 2, "Campos vacios. Operacion cancelada.");
+                    werase(win);
+                    draw_box(win, "Configuracion de Perfil");
+                    mvwprintw(win, 4, 2, "Campos vacios. Operacion cancelada.");
                 }
                 
                 mvwprintw(win, height - 2, 2, "[Presiona cualquier tecla para volver]");
                 wrefresh(win);
                 wgetch(win);
             }
-            else if (opcion_seleccionada == 3) { // Cerrar Sesión
+            else if (opcion_seleccionada == 4) { // Cerrar Sesión
                 logged_in = 0;
                 usuario_actual[0] = '\0'; 
                 werase(win);
@@ -381,7 +524,7 @@ int main(int argc, char *argv[]) {
                 wrefresh(win);
                 wgetch(win);
             }
-            else if (opcion_seleccionada == 4) { // Salir
+            else if (opcion_seleccionada == 5) { // Salir
                 break; 
             }
         }
