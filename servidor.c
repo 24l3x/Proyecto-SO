@@ -6,6 +6,7 @@
 #include <sys/sem.h>
 #include <pthread.h>
 #include <string.h>
+#include <time.h>    // <--- NUEVA LIBRERÍA AGREGADA PARA LAS FECHAS
 #include "common.h"
 
 #define DB_USERS "users.dat"
@@ -56,6 +57,7 @@ void *handle_client(void *arg) {
         printf("-- Acción del Cliente %d: Operación %d, Datos: %s\n", client_id, shm_ptr->peticion, shm_ptr->payload);
 
         switch (shm_ptr->peticion) {
+        //------------------------------------------------------------------------------------------------------------------------------
             case OP_LOGIN: {
                 char req_user[50], req_pass[65];
                 sscanf(shm_ptr->payload, "%s %s", req_user, req_pass); // El cliente manda el hash
@@ -80,6 +82,7 @@ void *handle_client(void *arg) {
                 strcpy(shm_ptr->respuesta, success ? "Login exitoso." : "Credenciales incorrectas.");
                 break;    
             }
+            //---------------------------------------------------------------------------------------------------------------------------
             case OP_GET_PRODUCTS: {
                 FILE *file = fopen("articulos.dat", "r");
                 shm_ptr->respuesta[0] = '\0'; // Limpiar la respuesta anterior
@@ -99,7 +102,7 @@ void *handle_client(void *arg) {
                 }
                 break;
             }
-
+//-------------------------------------------------------------------------------------------------------------------------------------
             case OP_REGISTER: {
                 char req_user[50], req_pass[65];
                 sscanf(shm_ptr->payload, "%s %s", req_user, req_pass);
@@ -117,6 +120,7 @@ void *handle_client(void *arg) {
                 }
                 break;
             }
+            //--------------------------------------------------------------------------------------------------------------------
 	    case OP_ADD_CART: {
                 char req_user[50], req_producto[200];
                 
@@ -148,6 +152,7 @@ void *handle_client(void *arg) {
                 }
                 break;
             }
+            //------------------------------------------------------------------------------------------------------------------------------
             case OP_GET_CART: {
                 char req_user[50];
                 strcpy(req_user, shm_ptr->payload);
@@ -173,7 +178,7 @@ void *handle_client(void *arg) {
                 }
                 break;
             }
-
+//-----------------------------------------------------------------------------------------------------------------------------------------
             case OP_GET_CATALOG: {
                 // Lee el archivo del proveedor (ID, Nombre, Caducidad)
                 FILE *file = fopen("catalogo.dat", "r");
@@ -193,7 +198,7 @@ void *handle_client(void *arg) {
                 }
                 break;
             }
-
+//---------------------------------------------------BUY CART----------------------------------------------------------------------------
             case OP_BUY_CART: {
                 char req_user[50];
                 strcpy(req_user, shm_ptr->payload);
@@ -208,15 +213,28 @@ void *handle_client(void *arg) {
                     break;
                 }
                 
+                // --- NUEVO: ARCHIVO DE HISTORIAL DE COMPRAS CON FECHA ---
+                FILE *f_compras = fopen("compras_diarias.dat", "a");
+                time_t t = time(NULL);
+                struct tm *tm_info = localtime(&t);
+                char fecha_actual[20];
+                // Generamos la fecha en formato YYYY-MM-DD
+                strftime(fecha_actual, sizeof(fecha_actual), "%Y-%m-%d", tm_info);
+                
                 // Leemos línea por línea el pedido al proveedor
                 char linea_cart[256];
                 while (fgets(linea_cart, sizeof(linea_cart), f_cart)) {
                     char id_c[20], nom_c[100], cad_c[20];
                     int cant_c;
                     
-                    // Formato esperado del cliente: ID, Nombre, Cantidad_Pedida, Caducidad
                     if (sscanf(linea_cart, " %[^,] , %[^,] , %d , %s", id_c, nom_c, &cant_c, cad_c) == 4) {
                         
+                        // Escribimos el registro en el historial para el Administrador
+                        if (f_compras) {
+                            fprintf(f_compras, "%s, %s, %s, %d\n", fecha_actual, req_user, nom_c, cant_c);
+                        }
+                        
+                        // Lógica para sumar al inventario
                         FILE *f_art = fopen("articulos.dat", "r");
                         FILE *f_tmp = fopen("articulos.tmp", "w");
                         int producto_existente = 0;
@@ -229,19 +247,16 @@ void *handle_client(void *arg) {
                                 
                                 if (sscanf(linea_art, " %[^,] , %[^,] , %d , %s", id_a, nom_a, &cant_a, cad_a) == 4) {
                                     if (strcmp(id_c, id_a) == 0) {
-                                        // El producto ya existe en inventario, SUMAMOS la compra
                                         cant_a += cant_c;
-                                        fprintf(f_tmp, "%s, %s, %d, %s\n", id_a, nom_a, cant_a, cad_a); // Actualizamos stock
+                                        fprintf(f_tmp, "%s, %s, %d, %s\n", id_a, nom_a, cant_a, cad_a); 
                                         producto_existente = 1;
                                     } else {
-                                        // No es el producto, lo copiamos igual
                                         fprintf(f_tmp, "%s", linea_art);
                                     }
                                 }
                             }
                             fclose(f_art);
                             
-                            // Si el producto pedido no estaba en inventario, lo agregamos como nuevo al final
                             if (!producto_existente) {
                                 fprintf(f_tmp, "%s, %s, %d, %s\n", id_c, nom_c, cant_c, cad_c);
                             }
@@ -250,7 +265,6 @@ void *handle_client(void *arg) {
                             remove("articulos.dat");
                             rename("articulos.tmp", "articulos.dat");
                         } else {
-                            // Si no existe articulos.dat, lo creamos y agregamos el primer producto
                             if (f_art) fclose(f_art);
                             if (f_tmp) fclose(f_tmp);
                             FILE *f_new = fopen("articulos.dat", "a");
@@ -262,8 +276,9 @@ void *handle_client(void *arg) {
                     }
                 }
                 fclose(f_cart);
+                if (f_compras) fclose(f_compras); // Cerramos el archivo de historial
                 
-                // Vaciamos el carrito de pedidos
+                // Vaciamos el carrito
                 FILE *f_clear = fopen(nombre_archivo, "w");
                 if (f_clear) fclose(f_clear);
                 
@@ -272,7 +287,7 @@ void *handle_client(void *arg) {
                 printf("   [+] Cliente %d (%s) registro compra a proveedores. Inventario actualizado.\n", client_id, req_user);
                 break;
             }
-
+//----------------------------------------------------UPDATE PROFILE------------------------------------------------------------------------
             case OP_UPDATE_PROFILE: {
                 char old_user[50], new_user[50], new_pass[65];
                 
@@ -327,7 +342,163 @@ void *handle_client(void *arg) {
                 }
                 break;
             }
-            
+            //---------------------------------------------------------------------------------------------------------------------------
+            case OP_GET_USERS: {
+                FILE *file = fopen(DB_USERS, "r");
+                shm_ptr->respuesta[0] = '\0';
+                
+                if (file) {
+                    char u_file[50], p_file[65];
+                    // Leemos el archivo línea por línea pero solo guardamos el nombre de usuario
+                    while (fscanf(file, "%s %s", u_file, p_file) != EOF) {
+                        strncat(shm_ptr->respuesta, u_file, sizeof(shm_ptr->respuesta) - strlen(shm_ptr->respuesta) - 1);
+                        strncat(shm_ptr->respuesta, "\n", sizeof(shm_ptr->respuesta) - strlen(shm_ptr->respuesta) - 1);
+                    }
+                    fclose(file);
+                    shm_ptr->status = 1;
+                    printf("   [INFO] Se envio la lista de usuarios al Administrador %d\n", client_id);
+                } else {
+                    shm_ptr->status = 0;
+                    strcpy(shm_ptr->respuesta, "No hay usuarios registrados o no existe la BD.\n");
+                }
+                break;
+            }
+//------------------------------------------------------------------------------------------------------------------------------------------
+            case OP_DELETE_USER: {
+                char req_user[50];
+                strcpy(req_user, shm_ptr->payload);
+
+                // Candado de seguridad vital
+                if (strcmp(req_user, "admin") == 0) {
+                    shm_ptr->status = 0;
+                    strcpy(shm_ptr->respuesta, "Error de seguridad: No puedes eliminar al administrador maestro.");
+                    break;
+                }
+
+                FILE *file = fopen(DB_USERS, "r");
+                FILE *temp = fopen("users.tmp", "w");
+                int deleted = 0;
+
+                if (file && temp) {
+                    char u_file[50], p_file[65];
+                    while (fscanf(file, "%s %s", u_file, p_file) != EOF) {
+                        if (strcmp(req_user, u_file) == 0) {
+                            deleted = 1; // Si es el usuario a borrar, NO lo copiamos al archivo temporal
+                        } else {
+                            fprintf(temp, "%s %s\n", u_file, p_file); // Copiamos el resto
+                        }
+                    }
+                    fclose(file);
+                    fclose(temp);
+
+                    // Reemplazar archivo viejo con el nuevo
+                    remove(DB_USERS);
+                    rename("users.tmp", DB_USERS);
+
+                    // De forma opcional, le borramos su archivo de carrito para limpiar la memoria
+                    char cart_file[100];
+                    snprintf(cart_file, sizeof(cart_file), "carrito_%s.dat", req_user);
+                    remove(cart_file);
+
+                    if (deleted) {
+                        shm_ptr->status = 1;
+                        strcpy(shm_ptr->respuesta, "Usuario eliminado correctamente.");
+                        printf("   [-] El Administrador elimino al usuario: %s\n", req_user);
+                    } else {
+                        shm_ptr->status = 0;
+                        strcpy(shm_ptr->respuesta, "Error: El usuario no existe en la base de datos.");
+                    }
+                } else {
+                    if (file) fclose(file);
+                    if (temp) fclose(temp);
+                    shm_ptr->status = 0;
+                    strcpy(shm_ptr->respuesta, "Error interno al abrir la BD del servidor.");
+                }
+                break;
+            }
+            //------------------------------------------------------------------------------------------------------------------------------
+            case OP_ADD_CATALOG_ITEM: {
+                char nuevo_nombre[100], nueva_caducidad[20];
+                // El administrador solo manda el nombre y la fecha
+                sscanf(shm_ptr->payload, "%s %s", nuevo_nombre, nueva_caducidad);
+
+                int max_id = 99; // Nuestro ID base, para que los registros empiecen en 100
+                FILE *file = fopen("catalogo.dat", "r");
+                if (file) {
+                    char linea[256];
+                    int id_actual;
+                    // Leemos línea por línea para encontrar el ID más grande
+                    while (fgets(linea, sizeof(linea), file)) {
+                        if (sscanf(linea, "%d", &id_actual) == 1) {
+                            if (id_actual > max_id) {
+                                max_id = id_actual;
+                            }
+                        }
+                    }
+                    fclose(file);
+                }
+
+                int nuevo_id = max_id + 1; // Auto-incremento
+                FILE *f_append = fopen("catalogo.dat", "a");
+                if (f_append) {
+                    // Escribimos con el formato exacto de tu catálogo
+                    fprintf(f_append, "%d, %s, %s\n", nuevo_id, nuevo_nombre, nueva_caducidad);
+                    fclose(f_append);
+                    shm_ptr->status = 1;
+                    snprintf(shm_ptr->respuesta, sizeof(shm_ptr->respuesta), "Exito. Producto '%s' con ID: %d", nuevo_nombre, nuevo_id);
+                    printf("   [+] Admin agrego producto al catalogo: ID %d, %s\n", nuevo_id, nuevo_nombre);
+                } else {
+                    shm_ptr->status = 0;
+                    strcpy(shm_ptr->respuesta, "Error al escribir en el catalogo del servidor.");
+                }
+                break;
+            }
+//--------------------------------------------------------------------------------------------------------------------------------
+            case OP_DELETE_CATALOG_ITEM: {
+                char req_id[20];
+                strcpy(req_id, shm_ptr->payload); // El payload es solo el ID a borrar
+
+                FILE *file = fopen("catalogo.dat", "r");
+                FILE *temp = fopen("catalogo.tmp", "w");
+                int deleted = 0;
+
+                if (file && temp) {
+                    char linea[256];
+                    while (fgets(linea, sizeof(linea), file)) {
+                        char id_a[20];
+                        // Extraemos todo antes de la primera coma para compararlo con el ID pedido
+                        if (sscanf(linea, " %[^,]", id_a) == 1) {
+                            if (strcmp(req_id, id_a) == 0) {
+                                deleted = 1; // Si es el ID, lo ignoramos (lo borramos)
+                            } else {
+                                fprintf(temp, "%s", linea); // Si no es, lo copiamos al archivo temporal
+                            }
+                        }
+                    }
+                    fclose(file);
+                    fclose(temp);
+                    
+                    // Sustituimos la base de datos con la versión limpia
+                    remove("catalogo.dat");
+                    rename("catalogo.tmp", "catalogo.dat");
+
+                    if (deleted) {
+                        shm_ptr->status = 1;
+                        strcpy(shm_ptr->respuesta, "Producto eliminado del catalogo.");
+                        printf("   [-] Admin elimino producto del catalogo: ID %s\n", req_id);
+                    } else {
+                        shm_ptr->status = 0;
+                        strcpy(shm_ptr->respuesta, "Error: Producto no encontrado.");
+                    }
+                } else {
+                    if (file) fclose(file);
+                    if (temp) fclose(temp);
+                    shm_ptr->status = 0;
+                    strcpy(shm_ptr->respuesta, "Error al acceder al catalogo de la base de datos.");
+                }
+                break;
+            }
+//-------------------------------------------------------------------------------------------------------------------------------            
             case OP_CHECK_ALERTS: {
                 FILE *file = fopen("articulos.dat", "r");
                 shm_ptr->respuesta[0] = '\0';
@@ -382,6 +553,84 @@ void *handle_client(void *arg) {
                 }
                 break;
             }
+            //------------------------------------------------------------------------------------------------------------------------
+            case OP_GET_REPORTS: {
+                char tipo_reporte[20];
+                strcpy(tipo_reporte, shm_ptr->payload); // Puede ser "DIARIO", "SEMANAL" o "MENSUAL"
+
+                FILE *f_compras = fopen("compras_diarias.dat", "r");
+                shm_ptr->respuesta[0] = '\0';
+                
+                if (!f_compras) {
+                    shm_ptr->status = 0;
+                    strcpy(shm_ptr->respuesta, "No hay historial de compras registrado todavia.");
+                    break;
+                }
+
+                time_t t_actual = time(NULL);
+                char linea[256];
+                int hay_datos = 0;
+                int total_articulos = 0;
+
+                // Encabezado del reporte
+                strcat(shm_ptr->respuesta, "Fecha       | Usuario | Producto | Cant\n");
+                strcat(shm_ptr->respuesta, "--------------------------------------------\n");
+
+                while (fgets(linea, sizeof(linea), f_compras)) {
+                    char fecha[20], user[50], prod[100];
+                    int cant;
+                    
+                    // Leemos el formato: YYYY-MM-DD, Usuario, Producto, Cantidad
+                    if (sscanf(linea, " %[^,] , %[^,] , %[^,] , %d", fecha, user, prod, &cant) == 4) {
+                        int anio, mes, dia;
+                        if (sscanf(fecha, "%d-%d-%d", &anio, &mes, &dia) == 3) {
+                            
+                            // Convertir la fecha leida a tiempo del sistema
+                            struct tm tm_compra = {0};
+                            tm_compra.tm_year = anio - 1900;
+                            tm_compra.tm_mon = mes - 1;
+                            tm_compra.tm_mday = dia;
+                            
+                            time_t t_compra = mktime(&tm_compra);
+                            double diff_segundos = difftime(t_actual, t_compra);
+                            int diff_dias = diff_segundos / (60 * 60 * 24);
+                            
+                            // Lógica de filtrado
+                            int incluir = 0;
+                            if (strcmp(tipo_reporte, "DIARIO") == 0 && diff_dias <= 1) incluir = 1;
+                            else if (strcmp(tipo_reporte, "SEMANAL") == 0 && diff_dias <= 7) incluir = 1;
+                            else if (strcmp(tipo_reporte, "MENSUAL") == 0 && diff_dias <= 30) incluir = 1;
+
+                            if (incluir) {
+                                char buffer_linea[150];
+                                // Formateamos con espacios fijos (%-7s) para que la tabla quede derechita
+                                snprintf(buffer_linea, sizeof(buffer_linea), "%s | %-7.7s | %-8.8s | %d\n", fecha, user, prod, cant);
+                                
+                                // Protegemos el buffer de la memoria compartida (max 1024 bytes)
+                                if (strlen(shm_ptr->respuesta) + strlen(buffer_linea) < 900) {
+                                    strcat(shm_ptr->respuesta, buffer_linea);
+                                    total_articulos += cant;
+                                    hay_datos = 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                fclose(f_compras);
+
+                if (!hay_datos) {
+                    shm_ptr->status = 0;
+                    snprintf(shm_ptr->respuesta, sizeof(shm_ptr->respuesta), "No hay compras para el reporte %s.", tipo_reporte);
+                } else {
+                    char buffer_total[100];
+                    snprintf(buffer_total, sizeof(buffer_total), "--------------------------------------------\nTOTAL ARTICULOS: %d", total_articulos);
+                    strcat(shm_ptr->respuesta, buffer_total);
+                    shm_ptr->status = 1;
+                    printf("   [INFO] Se envio el Reporte %s al Administrador %d\n", tipo_reporte, client_id);
+                }
+                break;
+            }
+            //-------------------------------------------------------------------------------------------------------------------
             default:
                 shm_ptr->status = 0;
                 strcpy(shm_ptr->respuesta, "Operación en construcción.");

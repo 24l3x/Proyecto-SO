@@ -3,7 +3,7 @@ CC = gcc
 CFLAGS = -Wall
 LDFLAGS = -lpthread
 
-TARGETS = servidor cliente
+TARGETS = servidor cliente admin
 
 all: $(TARGETS)
 
@@ -13,5 +13,7 @@ servidor: servidor.c
 cliente: cliente.c
 	$(CC) $(CFLAGS) cliente.c -o cliente -lncurses -lcrypto
 
+admin: admin.c
+	$(CC) $(CFLAGS) admin.c -o admin -lncurses -lcrypto
 clean:
 	rm -f $(TARGETS)
