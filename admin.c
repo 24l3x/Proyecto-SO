@@ -7,6 +7,7 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <openssl/sha.h>
+#include <ctype.h> // <--- LIBRERÍA PARA VALIDACIONES AGREGADA
 #include "common.h"
 
 // Variables globales para IPC
@@ -43,11 +44,24 @@ void draw_box(WINDOW *win, const char *title) {
 int enviar_peticion_servidor(op_type operacion, const char *payload) {
     shm_ptr->peticion = operacion;
     strncpy(shm_ptr->payload, payload, sizeof(shm_ptr->payload) - 1);
-    
+    shm_ptr->payload[sizeof(shm_ptr->payload) - 1] = '\0';
+
     sem_signal(semid, sem_c2s); 
     sem_wait(semid, sem_s2c);   
-    
+
     return shm_ptr->status;
+}
+
+// Función para validar la contraseña segura
+int validar_password(const char *pwd) {
+    int tiene_mayus = 0, tiene_minus = 0, tiene_num = 0, tiene_esp = 0;
+    for (int i = 0; pwd[i] != '\0'; i++) {
+        if (isupper(pwd[i])) tiene_mayus = 1;
+        else if (islower(pwd[i])) tiene_minus = 1;
+        else if (isdigit(pwd[i])) tiene_num = 1;
+        else if (ispunct(pwd[i])) tiene_esp = 1; 
+    }
+    return (tiene_mayus && tiene_minus && tiene_num && tiene_esp);
 }
 
 int main(int argc, char *argv[]) {
@@ -66,12 +80,11 @@ int main(int argc, char *argv[]) {
     semid = semget(base_key, MAX_CLIENTS * 2, 0666);
     
     int servidor_activo = 1;
-    int shmid = -1; // <--- LA DECLARAMOS AQUÍ AFUERA PARA QUE SEA GLOBAL EN EL MAIN
+    int shmid = -1; 
 
     if (semid == -1 || sem_conn_id == -1) {
         servidor_activo = 0; 
     } else {
-        // AQUI ABAJO LE QUITAMOS EL "int" PORQUE YA EXISTE ARRIBA
         shmid = shmget(my_key, sizeof(shm_data), IPC_CREAT | 0666); 
         shm_ptr = (shm_data *)shmat(shmid, NULL, 0);
 
@@ -309,7 +322,6 @@ int main(int argc, char *argv[]) {
                                         else if (input_ch == 'q' || input_ch == 'Q') salir_lista = 1;
                                         else if (input_ch == '\n' || input_ch == KEY_ENTER) {
                                             
-                                            // Extraer solo el ID del producto seleccionado para mandar a borrarlo
                                             char id_borrar[20];
                                             sscanf(productos[prod_seleccionado], " %[^,]", id_borrar);
 
@@ -345,7 +357,6 @@ int main(int argc, char *argv[]) {
                             werase(win);
                             draw_box(win, "Alta de Producto");
                             
-                            // Solo pedimos Nombre y Caducidad
                             mvwprintw(win, 2, 2, "Nombre (sin espacios): ");
                             mvwprintw(win, 4, 2, "Caducidad (YYYY-MM-DD): ");
                             mvwprintw(win, height - 2, 2, "[Deja vacio y da ENTER p/volver]");
@@ -457,7 +468,6 @@ int main(int argc, char *argv[]) {
                                         else if (input_ch == 'q' || input_ch == 'Q') salir_lista = 1;
                                         else if (input_ch == '\n' || input_ch == KEY_ENTER) {
                                             
-                                            // Pestaña de confirmación antes de eliminar
                                             werase(win);
                                             draw_box(win, "Atencion: Confirmar");
                                             mvwprintw(win, 4, 2, "Deseas borrar a: %s?", lista_usuarios[usr_seleccionado]);
@@ -474,7 +484,7 @@ int main(int argc, char *argv[]) {
                                                 mvwprintw(win, height - 2, 2, "[Presiona cualquier tecla]");
                                                 wrefresh(win);
                                                 wgetch(win);
-                                                salir_lista = 1; // Lo forzamos a salir para que la lista se refresque al entrar
+                                                salir_lista = 1; 
                                             }
                                         }
                                     }
@@ -485,65 +495,138 @@ int main(int argc, char *argv[]) {
                                 wgetch(win);
                             }
                         }
-                        else if (opcion_usr == 1) { // 2. CREAR NUEVO USUARIO
-                            char nuevo_u[50], nuevo_p[50];
-                            werase(win);
-                            draw_box(win, "Alta de Nuevo Empleado");
-                            
-                            mvwprintw(win, 2, 2, "Usuario: ");
-                            mvwprintw(win, 4, 2, "Password: ");
-                            mvwprintw(win, height - 2, 2, "[Deja vacio y da ENTER p/volver]");
-                            wrefresh(win);
-                            
-                            curs_set(1); 
-                            echo();
-                            mvwgetnstr(win, 2, 11, nuevo_u, 49); 
-                            noecho();
-                            
-                            if (strlen(nuevo_u) == 0) {
-                                curs_set(0);
-                                continue; 
-                            }
-                            
-                            int i = 0;
-                            int ch_pass;
-                            wmove(win, 4, 12); 
-                            while ((ch_pass = wgetch(win)) != '\n' && ch_pass != '\r' && i < 49) { 
-                                if (ch_pass == KEY_BACKSPACE || ch_pass == 127 || ch_pass == '\b') {
-                                    if (i > 0) {
-                                        i--;
-                                        int y, x;
-                                        getyx(win, y, x);
-                                        mvwaddch(win, y, x - 1, ' '); 
-                                        wmove(win, y, x - 1);
-                                        wrefresh(win);
+                        else if (opcion_usr == 1) { // 2. CREAR NUEVO USUARIO (Con Asistente de 6 Pasos)
+                            char reg_user[50]="", reg_pass[50]="", reg_nom[50]="", reg_ape[50]="", reg_correo[100]="", reg_tel[20]="";
+                            int paso = 0;
+                            int salir_registro = 0;
+
+                            while (paso < 6 && !salir_registro) {
+                                werase(win);
+                                draw_box(win, "Alta de Nuevo Empleado");
+                                mvwprintw(win, 2, 2, "1. Usuario: %s", reg_user);
+                                mvwprintw(win, 3, 2, "2. Password: %s", (paso > 1) ? "********" : "");
+                                mvwprintw(win, 4, 2, "3. Nombre: %s", reg_nom);
+                                mvwprintw(win, 5, 2, "4. Apellido: %s", reg_ape);
+                                mvwprintw(win, 6, 2, "5. Correo: %s", reg_correo);
+                                mvwprintw(win, 7, 2, "6. Telefono: %s", reg_tel);
+                                mvwprintw(win, height - 2, 2, "[Deja vacio y da ENTER p/volver]");
+                                wrefresh(win);
+
+                                if (paso == 0) { // Validar Usuario
+                                    curs_set(1); echo();
+                                    mvwgetnstr(win, 2, 14, reg_user, 49);
+                                    noecho(); curs_set(0);
+                                    if(strlen(reg_user) == 0) { salir_registro = 1; break; }
+                                    paso++;
+                                }
+                                else if (paso == 1) { // Validar Password
+                                    int i = 0; int ch_pass;
+                                    wmove(win, 3, 15);
+                                    curs_set(1);
+                                    while ((ch_pass = wgetch(win)) != '\n' && ch_pass != '\r' && i < 49) {
+                                        if (ch_pass == KEY_BACKSPACE || ch_pass == 127 || ch_pass == '\b') {
+                                            if (i > 0) {
+                                                i--; int y, x; getyx(win, y, x);
+                                                mvwaddch(win, y, x - 1, ' ');
+                                                wmove(win, y, x - 1); wrefresh(win);
+                                            }
+                                        } else {
+                                            reg_pass[i++] = ch_pass;
+                                            waddch(win, '*');
+                                        }
                                     }
-                                } else {
-                                    nuevo_p[i++] = ch_pass;
-                                    waddch(win, '*'); 
+                                    reg_pass[i] = '\0';
+                                    curs_set(0);
+
+                                    if(strlen(reg_pass) == 0) { salir_registro = 1; break; }
+
+                                    if (!validar_password(reg_pass)) {
+                                        werase(win); draw_box(win, "Error en Password");
+                                        wattron(win, A_STANDOUT);
+                                        mvwprintw(win, 4, 2, " La contrasena DEBE contener: ");
+                                        wattroff(win, A_STANDOUT);
+                                        mvwprintw(win, 6, 2, "- 1 Mayuscula, 1 Minuscula");
+                                        mvwprintw(win, 7, 2, "- 1 Numero, 1 Simbolo especial");
+                                        mvwprintw(win, height - 2, 2, "[Presiona ENTER para corregir]");
+                                        wrefresh(win); wgetch(win);
+                                    } else {
+                                        paso++;
+                                    }
+                                }
+                                else if (paso == 2) { // Validar Nombre
+                                    curs_set(1); echo();
+                                    mvwgetnstr(win, 4, 13, reg_nom, 49);
+                                    noecho(); curs_set(0);
+                                    if(strlen(reg_nom) == 0) { salir_registro = 1; break; }
+                                    paso++;
+                                }
+                                else if (paso == 3) { // Validar Apellido
+                                    curs_set(1); echo();
+                                    mvwgetnstr(win, 5, 15, reg_ape, 49);
+                                    noecho(); curs_set(0);
+                                    if(strlen(reg_ape) == 0) { salir_registro = 1; break; }
+                                    paso++;
+                                }
+                                else if (paso == 4) { // Validar Correo
+                                    curs_set(1); echo();
+                                    mvwgetnstr(win, 6, 13, reg_correo, 99);
+                                    noecho(); curs_set(0);
+                                    if(strlen(reg_correo) == 0) { salir_registro = 1; break; }
+
+                                    if (strchr(reg_correo, '@') == NULL) {
+                                        werase(win); draw_box(win, "Error en Correo");
+                                        wattron(win, A_STANDOUT);
+                                        mvwprintw(win, 5, 2, " Formato Invalido ");
+                                        wattroff(win, A_STANDOUT);
+                                        mvwprintw(win, 7, 2, "El correo debe contener un '@'.");
+                                        mvwprintw(win, height - 2, 2, "[Presiona ENTER para corregir]");
+                                        wrefresh(win); wgetch(win);
+                                    } else {
+                                        paso++;
+                                    }
+                                }
+                                else if (paso == 5) { // Validar Telefono
+                                    curs_set(1); echo();
+                                    mvwgetnstr(win, 7, 15, reg_tel, 19);
+                                    noecho(); curs_set(0);
+                                    if(strlen(reg_tel) == 0) { salir_registro = 1; break; }
+
+                                    int telefono_valido = 1;
+                                    if (strlen(reg_tel) != 10) telefono_valido = 0;
+                                    for (int k = 0; k < strlen(reg_tel); k++) {
+                                        if (!isdigit(reg_tel[k])) telefono_valido = 0;
+                                    }
+
+                                    if (!telefono_valido) {
+                                        werase(win); draw_box(win, "Error en Telefono");
+                                        wattron(win, A_STANDOUT);
+                                        mvwprintw(win, 4, 2, " Numero Invalido ");
+                                        wattroff(win, A_STANDOUT);
+                                        mvwprintw(win, 6, 2, "El telefono debe tener exactamente");
+                                        mvwprintw(win, 7, 2, "10 digitos (Solo numeros).");
+                                        mvwprintw(win, height - 2, 2, "[Presiona ENTER para corregir]");
+                                        wrefresh(win); wgetch(win);
+                                    } else {
+                                        paso++;
+                                    }
                                 }
                             }
-                            nuevo_p[i] = '\0';
-                            curs_set(0); 
 
-                            if (strlen(nuevo_p) == 0) continue;
+                            // Si terminó los 6 pasos sin salirse
+                            if (!salir_registro && paso == 6) {
+                                char hashed_pass[65];
+                                hash_password(reg_pass, hashed_pass);
+                                
+                                char payload_reg[1024];
+                                snprintf(payload_reg, sizeof(payload_reg), "%s %s %s %s %s %s", 
+                                         reg_user, hashed_pass, reg_nom, reg_ape, reg_correo, reg_tel);
 
-                            char hashed_p[65];
-                            hash_password(nuevo_p, hashed_p);
-                            
-                            char payload_reg[1024];
-                            snprintf(payload_reg, sizeof(payload_reg), "%s %s", nuevo_u, hashed_p);
-
-                            werase(win); 
-                            draw_box(win, "Alta de Nuevo Empleado");
-                            
-                            // Reusamos la instruccion OP_REGISTER que ya existía en el servidor
-                            enviar_peticion_servidor(OP_REGISTER, payload_reg);
-                            mvwprintw(win, 4, 2, "%s", shm_ptr->respuesta);
-                            
-                            mvwprintw(win, height - 2, 2, "[Presiona cualquier tecla]");
-                            wrefresh(win);
-                            wgetch(win);
+                                werase(win); draw_box(win, "Alta de Nuevo Empleado");
+                                enviar_peticion_servidor(OP_REGISTER, payload_reg);
+                                mvwprintw(win, 4, 2, "%s", shm_ptr->respuesta);
+                                mvwprintw(win, height - 2, 2, "[Presiona cualquier tecla]");
+                                wrefresh(win); wgetch(win);
+                            }
                         }
                         else if (opcion_usr == 2) { // 3. VOLVER
                             salir_usuarios = 1;

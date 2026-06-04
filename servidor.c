@@ -39,7 +39,7 @@ void *handle_client(void *arg) {
     }
     
     shm_data *shm_ptr = (shm_data *)shmat(shmid, NULL, 0);
-    printf(">> Hilo iniciado para atender al Cliente %d\n", client_id);
+    printf(">> Hilo [TID: %lu] iniciado para atender al Cliente %d\n", (unsigned long)pthread_self(), client_id);
 
     int sem_c2s = client_id * 2;     // Índice del semáforo: Cliente avisa al Servidor
     int sem_s2c = client_id * 2 + 1; // Índice del semáforo: Servidor avisa al Cliente
@@ -57,20 +57,24 @@ void *handle_client(void *arg) {
         printf("-- Acción del Cliente %d: Operación %d, Datos: %s\n", client_id, shm_ptr->peticion, shm_ptr->payload);
 
         switch (shm_ptr->peticion) {
-        //------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------
             case OP_LOGIN: {
                 char req_user[50], req_pass[65];
-                sscanf(shm_ptr->payload, "%s %s", req_user, req_pass); // El cliente manda el hash
+                sscanf(shm_ptr->payload, "%s %s", req_user, req_pass); // El cliente manda usuario y hash
 
                 FILE *file = fopen(DB_USERS, "r");
                 int success = 0;
                 
                 if (file) {
+                    char linea[256];
                     char u_file[50], p_file[65];
-                    while (fscanf(file, "%s %s", u_file, p_file) != EOF) {
-                        if (strcmp(req_user, u_file) == 0 && strcmp(req_pass, p_file) == 0) {
-                            success = 1;
-                            break;
+                    // NUEVO: Leemos por renglón completo para ignorar las nuevas columnas de datos personales
+                    while (fgets(linea, sizeof(linea), file)) {
+                        if (sscanf(linea, "%s %s", u_file, p_file) >= 2) {
+                            if (strcmp(req_user, u_file) == 0 && strcmp(req_pass, p_file) == 0) {
+                                success = 1;
+                                break;
+                            }
                         }
                     }
                     fclose(file);
@@ -104,16 +108,23 @@ void *handle_client(void *arg) {
             }
 //-------------------------------------------------------------------------------------------------------------------------------------
             case OP_REGISTER: {
-                char req_user[50], req_pass[65];
-                sscanf(shm_ptr->payload, "%s %s", req_user, req_pass);
+                // NUEVO: Declaramos variables para las 6 columnas
+                char req_user[50], req_pass[65], req_nom[50], req_ape[50], req_correo[100], req_tel[20];
+                
+                // Valores por defecto en caso de que un registro llegue incompleto
+                strcpy(req_nom, "-"); strcpy(req_ape, "-"); strcpy(req_correo, "-"); strcpy(req_tel, "-");
+                
+                // Extraemos todo el paquete que nos mandó el nuevo asistente de Registro
+                sscanf(shm_ptr->payload, "%s %s %s %s %s %s", req_user, req_pass, req_nom, req_ape, req_correo, req_tel);
 
                 FILE *file = fopen(DB_USERS, "a");
                 if (file) {
-                    fprintf(file, "%s %s\n", req_user, req_pass);
+                    // Guardamos la fila completa en la base de datos
+                    fprintf(file, "%s %s %s %s %s %s\n", req_user, req_pass, req_nom, req_ape, req_correo, req_tel);
                     fclose(file);
                     shm_ptr->status = 1;
                     strcpy(shm_ptr->respuesta, "Usuario registrado en el servidor.");
-                    printf("   [+] Nuevo usuario registrado: %s\n", req_user);
+                    printf("   [+] Nuevo usuario registrado: %s (%s %s)\n", req_user, req_nom, req_ape);
                 } else {
                     shm_ptr->status = 0;
                     strcpy(shm_ptr->respuesta, "Error del servidor al registrar.");
@@ -290,29 +301,41 @@ void *handle_client(void *arg) {
 //----------------------------------------------------UPDATE PROFILE------------------------------------------------------------------------
             case OP_UPDATE_PROFILE: {
                 char old_user[50], new_user[50], new_pass[65];
+                char new_nom[50], new_ape[50], new_correo[100], new_tel[20];
                 
-                // El payload viene estructurado como: usuario_anterior|nuevo_usuario|nuevo_hash
-                char *token1 = strtok(shm_ptr->payload, "|");
-                char *token2 = strtok(NULL, "|");
-                char *token3 = strtok(NULL, "|");
+                // Ahora desempacamos los 7 datos separados por el símbolo '|'
+                char *t1 = strtok(shm_ptr->payload, "|");
+                char *t2 = strtok(NULL, "|");
+                char *t3 = strtok(NULL, "|");
+                char *t4 = strtok(NULL, "|");
+                char *t5 = strtok(NULL, "|");
+                char *t6 = strtok(NULL, "|");
+                char *t7 = strtok(NULL, "|");
                 
-                if (token1 && token2 && token3) {
-                    strcpy(old_user, token1);
-                    strcpy(new_user, token2);
-                    strcpy(new_pass, token3);
+                if (t1 && t2 && t3 && t4 && t5 && t6 && t7) {
+                    strcpy(old_user, t1);
+                    strcpy(new_user, t2);
+                    strcpy(new_pass, t3);
+                    strcpy(new_nom, t4);
+                    strcpy(new_ape, t5);
+                    strcpy(new_correo, t6);
+                    strcpy(new_tel, t7);
                     
                     FILE *file = fopen(DB_USERS, "r");
                     FILE *temp = fopen("users.tmp", "w");
-                    int encontrado = 0;
                     
                     if (file && temp) {
-                        char u_file[50], p_file[65];
-                        while (fscanf(file, "%s %s", u_file, p_file) != EOF) {
-                            if (strcmp(old_user, u_file) == 0) {
-                                fprintf(temp, "%s %s\n", new_user, new_pass);
-                                encontrado = 1;
-                            } else {
-                                fprintf(temp, "%s %s\n", u_file, p_file);
+                        char linea[256];
+                        while (fgets(linea, sizeof(linea), file)) {
+                            char u_file[50], p_file[65], n_file[50], a_file[50], c_file[100], t_file[20];
+                            
+                            if (sscanf(linea, "%s %s %s %s %s %s", u_file, p_file, n_file, a_file, c_file, t_file) >= 2) {
+                                if (strcmp(old_user, u_file) == 0) {
+                                    // Sobreescribimos absolutamente toda la fila con los nuevos datos
+                                    fprintf(temp, "%s %s %s %s %s %s\n", new_user, new_pass, new_nom, new_ape, new_correo, new_tel);
+                                } else {
+                                    fprintf(temp, "%s", linea); // Copiamos intactos a los demás
+                                }
                             }
                         }
                         fclose(file);
@@ -321,7 +344,7 @@ void *handle_client(void *arg) {
                         remove(DB_USERS);
                         rename("users.tmp", DB_USERS);
                         
-                        // Opcional: Renombrar el archivo de su carrito si cambio su nombre de usuario
+                        // Renombrar el archivo de carrito por si cambió su nombre de usuario
                         char old_cart[100], new_cart[100];
                         snprintf(old_cart, sizeof(old_cart), "carrito_%s.dat", old_user);
                         snprintf(new_cart, sizeof(new_cart), "carrito_%s.dat", new_user);
@@ -329,7 +352,7 @@ void *handle_client(void *arg) {
                         
                         shm_ptr->status = 1;
                         strcpy(shm_ptr->respuesta, "Perfil actualizado correctamente.");
-                        printf("   [*] Perfil modificado: %s paso a ser %s\n", old_user, new_user);
+                        printf("   [*] Perfil modificado: %s ha actualizado todos sus datos.\n", old_user);
                     } else {
                         if (file) fclose(file);
                         if (temp) fclose(temp);
@@ -338,7 +361,7 @@ void *handle_client(void *arg) {
                     }
                 } else {
                     shm_ptr->status = 0;
-                    strcpy(shm_ptr->respuesta, "Datos de actualizacion corruptos.");
+                    strcpy(shm_ptr->respuesta, "Datos de actualizacion incompletos o corruptos.");
                 }
                 break;
             }
@@ -348,11 +371,14 @@ void *handle_client(void *arg) {
                 shm_ptr->respuesta[0] = '\0';
                 
                 if (file) {
-                    char u_file[50], p_file[65];
-                    // Leemos el archivo línea por línea pero solo guardamos el nombre de usuario
-                    while (fscanf(file, "%s %s", u_file, p_file) != EOF) {
-                        strncat(shm_ptr->respuesta, u_file, sizeof(shm_ptr->respuesta) - strlen(shm_ptr->respuesta) - 1);
-                        strncat(shm_ptr->respuesta, "\n", sizeof(shm_ptr->respuesta) - strlen(shm_ptr->respuesta) - 1);
+                    char linea[256];
+                    char u_file[50];
+                    // NUEVO: Leemos por renglón y extraemos SOLO el primer dato (el usuario)
+                    while (fgets(linea, sizeof(linea), file)) {
+                        if (sscanf(linea, "%s", u_file) == 1) {
+                            strncat(shm_ptr->respuesta, u_file, sizeof(shm_ptr->respuesta) - strlen(shm_ptr->respuesta) - 1);
+                            strncat(shm_ptr->respuesta, "\n", sizeof(shm_ptr->respuesta) - strlen(shm_ptr->respuesta) - 1);
+                        }
                     }
                     fclose(file);
                     shm_ptr->status = 1;
@@ -368,7 +394,6 @@ void *handle_client(void *arg) {
                 char req_user[50];
                 strcpy(req_user, shm_ptr->payload);
 
-                // Candado de seguridad vital
                 if (strcmp(req_user, "admin") == 0) {
                     shm_ptr->status = 0;
                     strcpy(shm_ptr->respuesta, "Error de seguridad: No puedes eliminar al administrador maestro.");
@@ -380,22 +405,24 @@ void *handle_client(void *arg) {
                 int deleted = 0;
 
                 if (file && temp) {
-                    char u_file[50], p_file[65];
-                    while (fscanf(file, "%s %s", u_file, p_file) != EOF) {
-                        if (strcmp(req_user, u_file) == 0) {
-                            deleted = 1; // Si es el usuario a borrar, NO lo copiamos al archivo temporal
-                        } else {
-                            fprintf(temp, "%s %s\n", u_file, p_file); // Copiamos el resto
+                    char linea[256];
+                    char u_file[50];
+                    // NUEVO: Mismo principio, leemos el renglón y extraemos solo el usuario a borrar
+                    while (fgets(linea, sizeof(linea), file)) {
+                        if (sscanf(linea, "%s", u_file) == 1) {
+                            if (strcmp(req_user, u_file) == 0) {
+                                deleted = 1; // Lo ignoramos (lo borramos)
+                            } else {
+                                fprintf(temp, "%s", linea); // Copiamos toda la fila intacta
+                            }
                         }
                     }
                     fclose(file);
                     fclose(temp);
 
-                    // Reemplazar archivo viejo con el nuevo
                     remove(DB_USERS);
                     rename("users.tmp", DB_USERS);
 
-                    // De forma opcional, le borramos su archivo de carrito para limpiar la memoria
                     char cart_file[100];
                     snprintf(cart_file, sizeof(cart_file), "carrito_%s.dat", req_user);
                     remove(cart_file);
@@ -516,7 +543,7 @@ void *handle_client(void *arg) {
                         // Leer el formato: ID, Nombre, Cantidad, YYYY-MM-DD
                         if (sscanf(linea, "%[^,], %[^,], %d, %s", id, nombre, &cantidad, fecha) == 4) {
                             struct tm tm_caducidad = {0};
-                            int anio, mes, dia;
+                            int anio = 0, mes = 0, dia = 0;
                             
                             sscanf(fecha, "%d-%d-%d", &anio, &mes, &dia);
                             tm_caducidad.tm_year = anio - 1900;
@@ -525,7 +552,7 @@ void *handle_client(void *arg) {
 
                             time_t t_caducidad = mktime(&tm_caducidad);
                             double diff_segundos = difftime(t_caducidad, t_actual);
-                            int dias_restantes = diff_segundos / (60 * 60 * 24);
+                            int dias_restantes = (int)(diff_segundos / 86400);
 
                             // Simulación: Si faltan 15 días o menos, lanzar alerta
                             if (dias_restantes <= 15) { 
@@ -582,7 +609,7 @@ void *handle_client(void *arg) {
                     
                     // Leemos el formato: YYYY-MM-DD, Usuario, Producto, Cantidad
                     if (sscanf(linea, " %[^,] , %[^,] , %[^,] , %d", fecha, user, prod, &cant) == 4) {
-                        int anio, mes, dia;
+                        int anio = 0, mes = 0, dia = 0;
                         if (sscanf(fecha, "%d-%d-%d", &anio, &mes, &dia) == 3) {
                             
                             // Convertir la fecha leida a tiempo del sistema
@@ -593,7 +620,7 @@ void *handle_client(void *arg) {
                             
                             time_t t_compra = mktime(&tm_compra);
                             double diff_segundos = difftime(t_actual, t_compra);
-                            int diff_dias = diff_segundos / (60 * 60 * 24);
+                            int diff_dias = (int)(diff_segundos / 86400);
                             
                             // Lógica de filtrado
                             int incluir = 0;
@@ -661,6 +688,7 @@ int main() {
 
     printf("=========================================\n");
     printf("   Servidor de Inventarios Iniciado      \n");
+    printf("   PID del Servidor Maestro: %d          \n", getpid());
     printf("=========================================\n");
 
     // Bucle principal: Escucha nuevas conexiones
