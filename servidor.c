@@ -705,28 +705,27 @@ int main() {
 
     // Bucle principal: Escucha nuevas conexiones
     while (1) {
-        // 1. Espera a que un cliente toque el timbre
         sem_wait(sem_conn_id, SEM_CONN);
 
         // === BLINDAJE ANTI-SEGFAULT ===
-        // Agregamos IPC_CREAT en el servidor para garantizar que la memoria exista
         int common_shmid = shmget(base_key, sizeof(common_data), IPC_CREAT | 0666);
         if (common_shmid == -1) {
             perror("Error al leer la memoria publica");
-            continue; // Si falla, ignora a este cliente y sigue vivo
+            continue; 
         }
-        
         common_data *common_ptr = (common_data *)shmat(common_shmid, NULL, 0);
         
-        // 2. EL SERVIDOR ASIGNA EL ID
+        // NUEVO: Leemos el PID que nos dejó el cliente
+        int pid_del_cliente = common_ptr->client_pid;
+        
         int client_id = global_id_counter++; 
         common_ptr->client_id = client_id; 
         shmdt(common_ptr);
 
-        // 3. Avisa al cliente que su ID ya está listo para recogerse
         sem_signal(sem_conn_id, SEM_ACK);
 
-        printf("\n[*] Nueva conexion detectada. Se asigno el Hilo/Cliente %d\n", client_id);
+        // ACTUALIZADO: Imprimimos el ID y el PID. (El TID se imprimirá después en el hilo)
+        printf("\n[*] Nueva conexion detectada. Se asigno el Hilo/Cliente %d (PID del proceso: %d)\n", client_id, pid_del_cliente);
 
         int *thread_arg = malloc(sizeof(int));
         *thread_arg = client_id;

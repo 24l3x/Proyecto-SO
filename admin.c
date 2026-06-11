@@ -81,22 +81,24 @@ int main(int argc, char *argv[]) {
         servidor_activo = 0; // El servidor está apagado, pero dejamos que abra el menú offline
     } else {
         // --- NUEVO APRETÓN DE MANOS (HANDSHAKE) ---
-        sem_wait(sem_conn_id, SEM_MUTEX); // 1. Bloqueamos la puerta (Hacemos fila)
-        sem_signal(sem_conn_id, SEM_CONN); // 2. Despertamos al servidor
-        sem_wait(sem_conn_id, SEM_ACK);    // 3. Esperamos a que el servidor nos asigne el ID
-
-        // 4. Leemos nuestro nuevo ID de la memoria compartida pública
-        int common_shmid = shmget(base_key, sizeof(common_data), 0666);
+        sem_wait(sem_conn_id, SEM_MUTEX); 
+        
+        // NUEVO: Abrimos la memoria y dejamos nuestro PID
+        int common_shmid = shmget(base_key, sizeof(common_data), IPC_CREAT | 0666);
         common_data *common_ptr = (common_data *)shmat(common_shmid, NULL, 0);
-        my_id = common_ptr->client_id;
-        shmdt(common_ptr);
+        common_ptr->client_pid = getpid(); // Dejamos nuestra credencial (PID)
+        
+        sem_signal(sem_conn_id, SEM_CONN); 
+        sem_wait(sem_conn_id, SEM_ACK);    
 
-        sem_signal(sem_conn_id, SEM_MUTEX); // 5. Soltamos la puerta para que pase el siguiente
+        my_id = common_ptr->client_id;     
+        shmdt(common_ptr);                 
+
+        sem_signal(sem_conn_id, SEM_MUTEX); 
         // ------------------------------------------
 
-        // Ahora sí, creamos nuestra memoria privada con el ID que nos dio el servidor
         key_t my_key = ftok(".", 100 + my_id); 
-        shmid = shmget(my_key, sizeof(shm_data), IPC_CREAT | 0666);
+        shmid = shmget(my_key, sizeof(shm_data), IPC_CREAT | 0666); // <-- Tu variable intacta
         shm_ptr = (shm_data *)shmat(shmid, NULL, 0);
 
         sem_c2s = my_id * 2;

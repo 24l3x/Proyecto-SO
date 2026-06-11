@@ -43,7 +43,7 @@ typedef struct {
 // Estructura para el "apretón de manos" inicial (Conexión)
 typedef struct {
     int client_id;
-    int shmid;
+    int client_pid; // <--- NUEVO: Espacio para que el cliente deje su PID
 } common_data;
 
 #endif
