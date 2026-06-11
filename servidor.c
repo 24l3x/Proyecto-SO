@@ -6,12 +6,11 @@
 #include <sys/sem.h>
 #include <pthread.h>
 #include <string.h>
-#include <time.h>   
+#include <time.h>    // <--- NUEVA LIBRERÍA AGREGADA PARA LAS FECHAS
 #include "common.h"
 
 #define DB_USERS "users.dat"
 
-int global_id_counter = 1; // Contador global de clientes
 int semid; // Arreglo de semáforos para sincronización Cliente-Hilo
 int sem_conn_id; // Semáforo para el apretón de manos inicial
 
@@ -31,9 +30,9 @@ void *handle_client(void *arg) {
     int client_id = *(int *)arg;
     free(arg);
 
-// Obtener la clave privada de este cliente
-    key_t client_key = ftok(".", 100 + client_id); // <--- CAMBIADO PARA SOPORTAR N CLIENTES
-    int shmid = shmget(client_key, sizeof(shm_data), 0666);	
+    // Obtener la clave privada de este cliente
+    key_t client_key = ftok(".", 'A' + client_id);
+    int shmid = shmget(client_key, sizeof(shm_data), 0666);
     if (shmid == -1) {
         perror("Error al conectar con SHM del cliente");
         pthread_exit(NULL);
@@ -447,8 +446,8 @@ void *handle_client(void *arg) {
             //------------------------------------------------------------------------------------------------------------------------------
             case OP_ADD_CATALOG_ITEM: {
                 char nuevo_nombre[100], nueva_caducidad[20];
-                // Usamos %[^|] para decirle a C que lea TODO el texto (incluyendo espacios) hasta que choque con el '|'
-                sscanf(shm_ptr->payload, "%[^|]|%s", nuevo_nombre, nueva_caducidad);
+                // El administrador solo manda el nombre y la fecha
+                sscanf(shm_ptr->payload, "%s %s", nuevo_nombre, nueva_caducidad);
 
                 int max_id = 99; // Nuestro ID base, para que los registros empiecen en 100
                 FILE *file = fopen("catalogo.dat", "r");
@@ -674,26 +673,15 @@ void *handle_client(void *arg) {
 }
 
 int main() {
-    // === LLAVES NUEVAS PARA EVITAR LA MEMORIA BASURA ===
-    key_t base_key = ftok(".", 'X'); 
-    key_t conn_key = ftok(".", 'Y'); 
+    key_t base_key = ftok(".", 'S');
+    key_t conn_key = ftok(".", 'C');
 
-    // Crear semáforo para nuevas conexiones (Handshake de 3 pasos)
-    sem_conn_id = semget(conn_key, 3, IPC_CREAT | 0666);
-    if (sem_conn_id == -1) {
-        perror("Error: No se pudieron crear los semaforos de conexion");
-        exit(1);
-    }
-    semctl(sem_conn_id, SEM_CONN, SETVAL, 0);
-    semctl(sem_conn_id, SEM_ACK, SETVAL, 0);
-    semctl(sem_conn_id, SEM_MUTEX, SETVAL, 1); // La puerta inicia libre
+    // Crear semáforo para nuevas conexiones
+    sem_conn_id = semget(conn_key, 1, IPC_CREAT | 0666);
+    semctl(sem_conn_id, 0, SETVAL, 0);
 
-    // Crear arreglo de semáforos para los hilos privados
+    // Crear arreglo de semáforos para los hilos privados (2 por cliente)
     semid = semget(base_key, MAX_CLIENTS * 2, IPC_CREAT | 0666);
-    if (semid == -1) {
-        perror("Error: No se pudo crear el arreglo de semaforos privados");
-        exit(1);
-    }
     for (int i = 0; i < MAX_CLIENTS * 2; i++) {
         semctl(semid, i, SETVAL, 0); 
     }
@@ -705,27 +693,16 @@ int main() {
 
     // Bucle principal: Escucha nuevas conexiones
     while (1) {
-        sem_wait(sem_conn_id, SEM_CONN);
+        // Espera a que un cliente nuevo mande el "apretón de manos"
+        sem_wait(sem_conn_id, 0);
 
-        // === BLINDAJE ANTI-SEGFAULT ===
-        int common_shmid = shmget(base_key, sizeof(common_data), IPC_CREAT | 0666);
-        if (common_shmid == -1) {
-            perror("Error al leer la memoria publica");
-            continue; 
-        }
+        int common_shmid = shmget(base_key, sizeof(common_data), 0666);
         common_data *common_ptr = (common_data *)shmat(common_shmid, NULL, 0);
         
-        // NUEVO: Leemos el PID que nos dejó el cliente
-        int pid_del_cliente = common_ptr->client_pid;
-        
-        int client_id = global_id_counter++; 
-        common_ptr->client_id = client_id; 
+        int client_id = common_ptr->client_id;
         shmdt(common_ptr);
 
-        sem_signal(sem_conn_id, SEM_ACK);
-
-        // ACTUALIZADO: Imprimimos el ID y el PID. (El TID se imprimirá después en el hilo)
-        printf("\n[*] Nueva conexion detectada. Se asigno el Hilo/Cliente %d (PID del proceso: %d)\n", client_id, pid_del_cliente);
+        printf("\n[*] Nueva conexión detectada: Cliente %d\n", client_id);
 
         int *thread_arg = malloc(sizeof(int));
         *thread_arg = client_id;
