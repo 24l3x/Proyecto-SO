@@ -364,7 +364,7 @@ int main(int argc, char *argv[]) {
                             werase(win);
                             draw_box(win, "Alta de Producto");
                             
-                            mvwprintw(win, 2, 2, "Nombre (sin espacios): ");
+                            mvwprintw(win, 2, 2, "Nombre del Producto: "); // Quitamos el aviso
                             mvwprintw(win, 4, 2, "Caducidad (YYYY-MM-DD): ");
                             mvwprintw(win, height - 2, 2, "[Deja vacio y da ENTER p/volver]");
                             wrefresh(win);
@@ -385,7 +385,7 @@ int main(int argc, char *argv[]) {
                             if (strlen(f_cad) == 0) continue;
                             
                             char payload_cat[1024];
-                            snprintf(payload_cat, sizeof(payload_cat), "%s %s", n_prod, f_cad);
+                            snprintf(payload_cat, sizeof(payload_cat), "%s|%s", n_prod, f_cad);
 
                             werase(win); 
                             draw_box(win, "Alta de Producto");

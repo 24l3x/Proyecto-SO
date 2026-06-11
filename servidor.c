@@ -447,8 +447,8 @@ void *handle_client(void *arg) {
             //------------------------------------------------------------------------------------------------------------------------------
             case OP_ADD_CATALOG_ITEM: {
                 char nuevo_nombre[100], nueva_caducidad[20];
-                // El administrador solo manda el nombre y la fecha
-                sscanf(shm_ptr->payload, "%s %s", nuevo_nombre, nueva_caducidad);
+                // Usamos %[^|] para decirle a C que lea TODO el texto (incluyendo espacios) hasta que choque con el '|'
+                sscanf(shm_ptr->payload, "%[^|]|%s", nuevo_nombre, nueva_caducidad);
 
                 int max_id = 99; // Nuestro ID base, para que los registros empiecen en 100
                 FILE *file = fopen("catalogo.dat", "r");
