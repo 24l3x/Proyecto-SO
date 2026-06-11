@@ -7,7 +7,7 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <openssl/sha.h>
-#include <ctype.h> // <--- LIBRERÍA PARA VALIDACIONES AGREGADA
+#include <ctype.h> 
 #include "common.h"
 
 // Variables globales para IPC
@@ -65,35 +65,42 @@ int validar_password(const char *pwd) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        printf("Uso: %s <id_admin: 1-%d>\n", argv[0], MAX_CLIENTS - 1);
-        exit(1);
-    }
-    int my_id = atoi(argv[1]);
+    int my_id = 0; 
+    int servidor_activo = 1; // <--- AQUÍ REGRESA LA VARIABLE QUE BORRAMOS
+    int shmid = -1;
 
-// ==== FASE 1: CONEXIÓN IPC ====
-    key_t base_key = ftok(".", 'S');
-    key_t conn_key = ftok(".", 'C');
-    key_t my_key = ftok(".", 'A' + my_id); 
+    // ==== FASE 1: CONEXIÓN IPC DINÁMICA ====
+    key_t base_key = ftok(".", 'X');
+    key_t conn_key = ftok(".", 'Y');
 
-    int sem_conn_id = semget(conn_key, 1, 0666);
+    // Intentamos obtener los semáforos sin crearlos
+    int sem_conn_id = semget(conn_key, 3, 0666); 
     semid = semget(base_key, MAX_CLIENTS * 2, 0666);
     
-    int servidor_activo = 1;
-    int shmid = -1; 
-
     if (semid == -1 || sem_conn_id == -1) {
-        servidor_activo = 0; 
+        servidor_activo = 0; // El servidor está apagado, pero dejamos que abra el menú offline
     } else {
-        shmid = shmget(my_key, sizeof(shm_data), IPC_CREAT | 0666); 
-        shm_ptr = (shm_data *)shmat(shmid, NULL, 0);
-
+        // --- NUEVO APRETÓN DE MANOS (HANDSHAKE) ---
+        sem_wait(sem_conn_id, SEM_MUTEX); 
+        
+        // NUEVO: Abrimos la memoria y dejamos nuestro PID
         int common_shmid = shmget(base_key, sizeof(common_data), IPC_CREAT | 0666);
         common_data *common_ptr = (common_data *)shmat(common_shmid, NULL, 0);
-        common_ptr->client_id = my_id;
-        shmdt(common_ptr);
+        common_ptr->client_pid = getpid(); // Dejamos nuestra credencial (PID)
         
-        sem_signal(sem_conn_id, 0); 
+        sem_signal(sem_conn_id, SEM_CONN); 
+        sem_wait(sem_conn_id, SEM_ACK);    
+
+        my_id = common_ptr->client_id;     
+        shmdt(common_ptr);                 
+
+        sem_signal(sem_conn_id, SEM_MUTEX); 
+        // ------------------------------------------
+
+        key_t my_key = ftok(".", 100 + my_id); 
+        shmid = shmget(my_key, sizeof(shm_data), IPC_CREAT | 0666); // <-- Tu variable intacta
+        shm_ptr = (shm_data *)shmat(shmid, NULL, 0);
+
         sem_c2s = my_id * 2;
         sem_s2c = my_id * 2 + 1;
     }
@@ -357,7 +364,7 @@ int main(int argc, char *argv[]) {
                             werase(win);
                             draw_box(win, "Alta de Producto");
                             
-                            mvwprintw(win, 2, 2, "Nombre (sin espacios): ");
+                            mvwprintw(win, 2, 2, "Nombre del Producto: "); // Quitamos el aviso
                             mvwprintw(win, 4, 2, "Caducidad (YYYY-MM-DD): ");
                             mvwprintw(win, height - 2, 2, "[Deja vacio y da ENTER p/volver]");
                             wrefresh(win);
@@ -378,7 +385,7 @@ int main(int argc, char *argv[]) {
                             if (strlen(f_cad) == 0) continue;
                             
                             char payload_cat[1024];
-                            snprintf(payload_cat, sizeof(payload_cat), "%s %s", n_prod, f_cad);
+                            snprintf(payload_cat, sizeof(payload_cat), "%s|%s", n_prod, f_cad);
 
                             werase(win); 
                             draw_box(win, "Alta de Producto");
