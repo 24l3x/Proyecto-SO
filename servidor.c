@@ -6,11 +6,12 @@
 #include <sys/sem.h>
 #include <pthread.h>
 #include <string.h>
-#include <time.h>    // <--- NUEVA LIBRERÍA AGREGADA PARA LAS FECHAS
+#include <time.h>   
 #include "common.h"
 
 #define DB_USERS "users.dat"
 
+int global_id_counter = 1; // Contador global de clientes
 int semid; // Arreglo de semáforos para sincronización Cliente-Hilo
 int sem_conn_id; // Semáforo para el apretón de manos inicial
 
@@ -30,9 +31,9 @@ void *handle_client(void *arg) {
     int client_id = *(int *)arg;
     free(arg);
 
-    // Obtener la clave privada de este cliente
-    key_t client_key = ftok(".", 'A' + client_id);
-    int shmid = shmget(client_key, sizeof(shm_data), 0666);
+// Obtener la clave privada de este cliente
+    key_t client_key = ftok(".", 100 + client_id); // <--- CAMBIADO PARA SOPORTAR N CLIENTES
+    int shmid = shmget(client_key, sizeof(shm_data), 0666);	
     if (shmid == -1) {
         perror("Error al conectar con SHM del cliente");
         pthread_exit(NULL);
@@ -673,15 +674,26 @@ void *handle_client(void *arg) {
 }
 
 int main() {
-    key_t base_key = ftok(".", 'S');
-    key_t conn_key = ftok(".", 'C');
+    // === LLAVES NUEVAS PARA EVITAR LA MEMORIA BASURA ===
+    key_t base_key = ftok(".", 'X'); 
+    key_t conn_key = ftok(".", 'Y'); 
 
-    // Crear semáforo para nuevas conexiones
-    sem_conn_id = semget(conn_key, 1, IPC_CREAT | 0666);
-    semctl(sem_conn_id, 0, SETVAL, 0);
+    // Crear semáforo para nuevas conexiones (Handshake de 3 pasos)
+    sem_conn_id = semget(conn_key, 3, IPC_CREAT | 0666);
+    if (sem_conn_id == -1) {
+        perror("Error: No se pudieron crear los semaforos de conexion");
+        exit(1);
+    }
+    semctl(sem_conn_id, SEM_CONN, SETVAL, 0);
+    semctl(sem_conn_id, SEM_ACK, SETVAL, 0);
+    semctl(sem_conn_id, SEM_MUTEX, SETVAL, 1); // La puerta inicia libre
 
-    // Crear arreglo de semáforos para los hilos privados (2 por cliente)
+    // Crear arreglo de semáforos para los hilos privados
     semid = semget(base_key, MAX_CLIENTS * 2, IPC_CREAT | 0666);
+    if (semid == -1) {
+        perror("Error: No se pudo crear el arreglo de semaforos privados");
+        exit(1);
+    }
     for (int i = 0; i < MAX_CLIENTS * 2; i++) {
         semctl(semid, i, SETVAL, 0); 
     }
@@ -693,16 +705,28 @@ int main() {
 
     // Bucle principal: Escucha nuevas conexiones
     while (1) {
-        // Espera a que un cliente nuevo mande el "apretón de manos"
-        sem_wait(sem_conn_id, 0);
+        // 1. Espera a que un cliente toque el timbre
+        sem_wait(sem_conn_id, SEM_CONN);
 
-        int common_shmid = shmget(base_key, sizeof(common_data), 0666);
+        // === BLINDAJE ANTI-SEGFAULT ===
+        // Agregamos IPC_CREAT en el servidor para garantizar que la memoria exista
+        int common_shmid = shmget(base_key, sizeof(common_data), IPC_CREAT | 0666);
+        if (common_shmid == -1) {
+            perror("Error al leer la memoria publica");
+            continue; // Si falla, ignora a este cliente y sigue vivo
+        }
+        
         common_data *common_ptr = (common_data *)shmat(common_shmid, NULL, 0);
         
-        int client_id = common_ptr->client_id;
+        // 2. EL SERVIDOR ASIGNA EL ID
+        int client_id = global_id_counter++; 
+        common_ptr->client_id = client_id; 
         shmdt(common_ptr);
 
-        printf("\n[*] Nueva conexión detectada: Cliente %d\n", client_id);
+        // 3. Avisa al cliente que su ID ya está listo para recogerse
+        sem_signal(sem_conn_id, SEM_ACK);
+
+        printf("\n[*] Nueva conexion detectada. Se asigno el Hilo/Cliente %d\n", client_id);
 
         int *thread_arg = malloc(sizeof(int));
         *thread_arg = client_id;

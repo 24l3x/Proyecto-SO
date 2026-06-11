@@ -1,8 +1,13 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-#define MAX_CLIENTS 5
+#define MAX_CLIENTS 100 // ¡Ahora soporta hasta 100 usuarios concurrentes!
 #define SHM_SIZE 2048
+
+// Índices para el nuevo arreglo de semáforos de conexión (Handshake)
+#define SEM_CONN  0  // El cliente toca el timbre
+#define SEM_ACK   1  // El servidor le entrega el ID al cliente
+#define SEM_MUTEX 2  // Candado para que los clientes hagan fila de 1 en 1
 
 // Tipos de peticiones que el cliente o admin le pueden hacer al servidor
 typedef enum {

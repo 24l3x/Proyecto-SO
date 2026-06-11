@@ -7,7 +7,7 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <openssl/sha.h>
-#include <ctype.h> // <--- NUEVA LIBRERÍA PARA VALIDACIONES
+#include <ctype.h> 
 #include "common.h"
 
 // Variables globales para IPC
@@ -15,18 +15,18 @@ int semid;
 int sem_c2s, sem_s2c;
 shm_data *shm_ptr;
 
-// Helpers de semáforos
-void sem_wait(int id, int num) {
+
+void sem_wait(int id, int num) {//espera semaforos
     struct sembuf op = {num, -1, 0};
     semop(id, &op, 1);
 }
 
-void sem_signal(int id, int num) {
+void sem_signal(int id, int num) {//play semaforo
     struct sembuf op = {num, 1, 0};
     semop(id, &op, 1);
 }
 
-void hash_password(const char *pass, char *out_hex) {
+void hash_password(const char *pass, char *out_hex) {//cifrado de contraseña
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256((unsigned char*)pass, strlen(pass), hash);
     for(int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
@@ -41,60 +41,67 @@ void draw_box(WINDOW *win, const char *title) {
     wrefresh(win);
 }
 
-// Función que empaqueta la comunicación con el servidor
-int enviar_peticion_servidor(op_type operacion, const char *payload) {
+
+int enviar_peticion_servidor(op_type operacion, const char *payload) {//funcion conexion con el servidor
     shm_ptr->peticion = operacion;
     strncpy(shm_ptr->payload, payload, sizeof(shm_ptr->payload) - 1);
     shm_ptr->payload[sizeof(shm_ptr->payload) - 1] = '\0';
 
-    sem_signal(semid, sem_c2s); 
-    sem_wait(semid, sem_s2c);   
+    sem_signal(semid, sem_c2s);//le habla al servidor para lea lo que se metio en el buzon 
+    sem_wait(semid, sem_s2c); //se pausa el cliente   
 
     return shm_ptr->status;
 }
-int validar_password(const char *pwd) {
+
+int validar_password(const char *pwd) {//funcion para valiad contraseña
     int tiene_mayus = 0, tiene_minus = 0, tiene_num = 0, tiene_esp = 0;
     for (int i = 0; pwd[i] != '\0'; i++) {
         if (isupper(pwd[i])) tiene_mayus = 1;
         else if (islower(pwd[i])) tiene_minus = 1;
         else if (isdigit(pwd[i])) tiene_num = 1;
-        else if (ispunct(pwd[i])) tiene_esp = 1; // ispunct detecta cualquier símbolo especial
+        else if (ispunct(pwd[i])) tiene_esp = 1; 
     }
     return (tiene_mayus && tiene_minus && tiene_num && tiene_esp);
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        printf("Uso: %s <id_cliente: 1-%d>\n", argv[0], MAX_CLIENTS - 1);
-        exit(1);
-    }
-    int my_id = atoi(argv[1]);
+    // ¡Adiós a la validación de argc y argv! Ya solo ejecutamos ./cliente
+    int my_id;
 
-    // ==== FASE 1: CONEXIÓN IPC ====
-    key_t base_key = ftok(".", 'S');
-    key_t conn_key = ftok(".", 'C');
-    key_t my_key = ftok(".", 'A' + my_id); 
+    // ==== FASE 1: CONEXIÓN IPC DINÁMICA ====
+    key_t base_key = ftok(".", 'X');
+    key_t conn_key = ftok(".", 'Y');
 
-    // Intentamos obtener los semáforos sin crearlos (0666)
-    int sem_conn_id = semget(conn_key, 1, 0666);
+    // Intentamos obtener los semáforos sin crearlos
+    int sem_conn_id = semget(conn_key, 3, 0666); // Ahora son 3 semáforos
     semid = semget(base_key, MAX_CLIENTS * 2, 0666);
     
-    // Si los semáforos no existen, el servidor está apagado
     if (semid == -1 || sem_conn_id == -1) {
-        printf("El servidor está apagado por lo que no podemos iniciar el cliente\n");
+        printf("El servidor está apagado por lo que no podemos iniciar...\n");
         exit(1);
     }
 
-    // Apretón de manos con el servidor
-    int shmid = shmget(my_key, sizeof(shm_data), IPC_CREAT | 0666);
-    shm_ptr = (shm_data *)shmat(shmid, NULL, 0);
+    // --- NUEVO APRETÓN DE MANOS (HANDSHAKE) ---
+    sem_wait(sem_conn_id, SEM_MUTEX); // 1. Bloqueamos la puerta (Hacemos fila)
+    
+    sem_signal(sem_conn_id, SEM_CONN); // 2. Despertamos al servidor
+    
+    sem_wait(sem_conn_id, SEM_ACK);    // 3. Esperamos a que el servidor nos asigne el ID
 
+    // 4. Leemos nuestro nuevo ID de la memoria compartida pública
     int common_shmid = shmget(base_key, sizeof(common_data), IPC_CREAT | 0666);
     common_data *common_ptr = (common_data *)shmat(common_shmid, NULL, 0);
-    common_ptr->client_id = my_id;
+    my_id = common_ptr->client_id;
     shmdt(common_ptr);
-    
-    sem_signal(sem_conn_id, 0); // Despertar al hilo principal del servidor
+
+    sem_signal(sem_conn_id, SEM_MUTEX); // 5. Soltamos la puerta para que pase el siguiente cliente
+    // ------------------------------------------
+
+    // Ahora sí, creamos nuestra memoria privada con el ID que nos dio el servidor
+    key_t my_key = ftok(".", 100 + my_id); // <--- CAMBIADO PARA COINCIDIR CON EL SERVIDOR
+
+    int shmid_privado = shmget(my_key, sizeof(shm_data), IPC_CREAT | 0666);
+    shm_ptr = (shm_data *)shmat(shmid_privado, NULL, 0);
 
     sem_c2s = my_id * 2;
     sem_s2c = my_id * 2 + 1;
@@ -131,9 +138,9 @@ int main(int argc, char *argv[]) {
             opciones[2] = "Salir";
             num_opciones = 3;
         } else {
-            opciones[0] = "Ver Inventario";           // Antes "Ver Catalogo de Productos"
-            opciones[1] = "Alertas de Caducidad";     // Movido de posición
-            opciones[2] = "Comprar Producto";         // Nueva lógica pendiente
+            opciones[0] = "Ver Inventario";          
+            opciones[1] = "Alertas de Caducidad";     
+            opciones[2] = "Comprar Producto";         
             opciones[3] = "Perfil de Usuario";        
             opciones[4] = "Cerrar Sesion";
             opciones[5] = "Salir";
@@ -738,6 +745,6 @@ int main(int argc, char *argv[]) {
     delwin(win);
     endwin();
     shmdt(shm_ptr);
-    shmctl(shmid, IPC_RMID, NULL);
+    shmctl(shmid_privado, IPC_RMID, NULL);
     return 0;
 }
