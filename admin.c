@@ -330,7 +330,7 @@ int main(int argc, char *argv[]) {
                                         else if (input_ch == '\n' || input_ch == KEY_ENTER) {
                                             
                                             char id_borrar[20];
-                                            sscanf(productos[prod_seleccionado], " %[^,]", id_borrar);
+                                            sscanf(productos[prod_seleccionado], " %[^/]", id_borrar);
 
                                             werase(win);
                                             draw_box(win, "Atencion: Confirmar");

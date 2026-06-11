@@ -239,11 +239,11 @@ void *handle_client(void *arg) {
                     char id_c[20], nom_c[100], cad_c[20];
                     int cant_c;
                     
-                    if (sscanf(linea_cart, " %[^,] , %[^,] , %d , %s", id_c, nom_c, &cant_c, cad_c) == 4) {
+                    if (sscanf(linea_cart, " %[^/] / %[^/] / %d / %s", id_c, nom_c, &cant_c, cad_c) == 4) {
                         
                         // Escribimos el registro en el historial para el Administrador
                         if (f_compras) {
-                            fprintf(f_compras, "%s, %s, %s, %d\n", fecha_actual, req_user, nom_c, cant_c);
+                            fprintf(f_compras, "%s / %s / %s / %d\n", fecha_actual, req_user, nom_c, cant_c);
                         }
                         
                         // Lógica para sumar al inventario
@@ -257,10 +257,10 @@ void *handle_client(void *arg) {
                                 char id_a[20], nom_a[100], cad_a[20];
                                 int cant_a;
                                 
-                                if (sscanf(linea_art, " %[^,] , %[^,] , %d , %s", id_a, nom_a, &cant_a, cad_a) == 4) {
+                                if (sscanf(linea_art, " %[^/] / %[^/] / %d / %s", id_a, nom_a, &cant_a, cad_a) == 4) {
                                     if (strcmp(id_c, id_a) == 0) {
                                         cant_a += cant_c;
-                                        fprintf(f_tmp, "%s, %s, %d, %s\n", id_a, nom_a, cant_a, cad_a); 
+                                        fprintf(f_tmp, "%s / %s / %d / %s\n", id_a, nom_a, cant_a, cad_a); 
                                         producto_existente = 1;
                                     } else {
                                         fprintf(f_tmp, "%s", linea_art);
@@ -270,7 +270,7 @@ void *handle_client(void *arg) {
                             fclose(f_art);
                             
                             if (!producto_existente) {
-                                fprintf(f_tmp, "%s, %s, %d, %s\n", id_c, nom_c, cant_c, cad_c);
+                                fprintf(f_tmp, "%s / %s / %d / %s\n", id_c, nom_c, cant_c, cad_c);
                             }
                             fclose(f_tmp);
                             
@@ -281,7 +281,7 @@ void *handle_client(void *arg) {
                             if (f_tmp) fclose(f_tmp);
                             FILE *f_new = fopen("articulos.dat", "a");
                             if (f_new) {
-                                fprintf(f_new, "%s, %s, %d, %s\n", id_c, nom_c, cant_c, cad_c);
+                                fprintf(f_new, "%s / %s / %d / %s\n", id_c, nom_c, cant_c, cad_c);
                                 fclose(f_new);
                             }
                         }
@@ -470,7 +470,7 @@ void *handle_client(void *arg) {
                 FILE *f_append = fopen("catalogo.dat", "a");
                 if (f_append) {
                     // Escribimos con el formato exacto de tu catálogo
-                    fprintf(f_append, "%d, %s, %s\n", nuevo_id, nuevo_nombre, nueva_caducidad);
+                    fprintf(f_append, "%d / %s / %s\n", nuevo_id, nuevo_nombre, nueva_caducidad);
                     fclose(f_append);
                     shm_ptr->status = 1;
                     snprintf(shm_ptr->respuesta, sizeof(shm_ptr->respuesta), "Exito. Producto '%s' con ID: %d", nuevo_nombre, nuevo_id);
@@ -495,7 +495,7 @@ void *handle_client(void *arg) {
                     while (fgets(linea, sizeof(linea), file)) {
                         char id_a[20];
                         // Extraemos todo antes de la primera coma para compararlo con el ID pedido
-                        if (sscanf(linea, " %[^,]", id_a) == 1) {
+                        if (sscanf(linea, " %[^/]", id_a) == 1) {
                             if (strcmp(req_id, id_a) == 0) {
                                 deleted = 1; // Si es el ID, lo ignoramos (lo borramos)
                             } else {
@@ -542,7 +542,7 @@ void *handle_client(void *arg) {
 
                     while (fgets(linea, sizeof(linea), file)) {
                         // Leer el formato: ID, Nombre, Cantidad, YYYY-MM-DD
-                        if (sscanf(linea, "%[^,], %[^,], %d, %s", id, nombre, &cantidad, fecha) == 4) {
+                        if (sscanf(linea, "%[^/] / %[^/] / %d / %s", id, nombre, &cantidad, fecha) == 4) {
                             struct tm tm_caducidad = {0};
                             int anio = 0, mes = 0, dia = 0;
                             
@@ -609,7 +609,7 @@ void *handle_client(void *arg) {
                     int cant;
                     
                     // Leemos el formato: YYYY-MM-DD, Usuario, Producto, Cantidad
-                    if (sscanf(linea, " %[^,] , %[^,] , %[^,] , %d", fecha, user, prod, &cant) == 4) {
+                    if (sscanf(linea, " %[^/] / %[^/] / %[^/] / %d", fecha, user, prod, &cant) == 4) {
                         int anio = 0, mes = 0, dia = 0;
                         if (sscanf(fecha, "%d-%d-%d", &anio, &mes, &dia) == 3) {
                             

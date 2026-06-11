@@ -512,7 +512,7 @@ int main(int argc, char *argv[]) {
                                             char id_prod[20], nom_prod[100], cad_prod[20];
                                             
                                             // Leemos el formato del catalogo: ID, Nombre, Caducidad
-                                            sscanf(productos[prod_seleccionado], " %[^,] , %[^,] , %s", id_prod, nom_prod, cad_prod);
+                                            sscanf(productos[prod_seleccionado], " %[^/] / %[^/] / %s", id_prod, nom_prod, cad_prod);
 
                                             // Ventana emergente para preguntar cantidad a pedir
                                             werase(win);
@@ -533,7 +533,7 @@ int main(int argc, char *argv[]) {
                                             if (cantidad_pedida > 0) {
                                                 char payload_carrito[1024];
                                                 // Empaquetamos para el carrito: ID, Nombre, Cantidad pedida, Caducidad
-                                                snprintf(payload_carrito, sizeof(payload_carrito), "%s|%s, %s, %d, %s", 
+                                                snprintf(payload_carrito, sizeof(payload_carrito), "%s|%s / %s / %d / %s", 
                                                          usuario_actual, id_prod, nom_prod, cantidad_pedida, cad_prod);
                                                 
                                                 enviar_peticion_servidor(OP_ADD_CART, payload_carrito);
